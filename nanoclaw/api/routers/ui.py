@@ -464,4 +464,3 @@ INDEX_HTML = """<!doctype html>
 @router.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     return HTMLResponse(INDEX_HTML)
-

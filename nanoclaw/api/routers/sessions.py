@@ -14,4 +14,3 @@ async def create_session(request: CreateSessionRequest) -> CreateSessionResponse
     if not is_valid_thread_id(thread_id):
         raise HTTPException(status_code=400, detail="thread_id may only contain letters, numbers, '-' and '_'")
     return CreateSessionResponse(thread_id=thread_id)
-

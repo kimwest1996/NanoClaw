@@ -11,4 +11,3 @@ async def health(request: Request) -> HealthResponse:
         provider=request.app.state.provider,
         model=request.app.state.model,
     )
-

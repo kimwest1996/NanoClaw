@@ -31,4 +31,3 @@ class MessageResponse(BaseModel):
     thread_id: str
     content: str
     messages_count: int
-

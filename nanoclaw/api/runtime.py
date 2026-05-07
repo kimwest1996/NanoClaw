@@ -61,4 +61,3 @@ def read_thread_events(thread_id: str, limit: int) -> list[dict[str, Any]]:
             if event.get("thread_id") == thread_id:
                 events.append(event)
     return events[-limit:]
-

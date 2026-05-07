@@ -124,4 +124,3 @@ async def list_pending_approvals(
         if not future.done()
     ]
     return {"pending": active}
-
