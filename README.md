@@ -11,7 +11,7 @@
 [![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)](tests/)
 [![GitHub](https://img.shields.io/badge/GitHub-@kimwest1996-black.svg?logo=github)](https://github.com/kimwest1996)
 
-[Quick Start](#quick-start) · [Why NanoClaw](#why-nanoclaw) · [Architecture](#architecture) · [Evaluation](#evaluation) · [Docs](#docs)
+[Quick Start](#quick-start) · [API Runtime](#api-runtime) · [Why NanoClaw](#why-nanoclaw) · [Architecture](#architecture) · [Evaluation](#evaluation) · [Docs](#docs)
 
 </div>
 
@@ -55,7 +55,12 @@ If OpenClaw is a major source of inspiration, NanoClaw is the attempt to turn th
 
 NanoClaw currently provides:
 
-- **LangGraph agent loop** with `ToolNode`-based tool execution
+- **LangGraph agent loop** with policy-aware `SafeToolNode` execution
+- **FastAPI runtime mode**
+  - text message API
+  - built-in web chat UI
+  - SQLite-backed session continuity
+  - JSONL audit event access
 - **dual-layer memory**
   - long-term user profile in Markdown
   - short-term conversational summary in SQLite-backed state
@@ -65,6 +70,14 @@ NanoClaw currently provides:
 - **sandboxed engineering tools**
   - file read/write inside a restricted workspace
   - shell execution with path and command guardrails
+- **centralized tool governance**
+  - risk-based tool policy
+  - human approval for high-risk tools
+  - read-only tool parallelism and side-effect serialization
+  - structured tool error handling and retryable failures
+- **current-information web search**
+  - optional Tavily-backed `web_search`
+  - enabled only when `TAVILY_API_KEY` is configured
 - **heartbeat-driven task scheduling**
   - one-off and recurring tasks
   - persistent task queue
@@ -117,12 +130,37 @@ At a high level, the runtime looks like this:
 | `nanoclaw/core/context.py` | context trimming and state handling |
 | `nanoclaw/core/provider.py` | model/provider abstraction |
 | `nanoclaw/core/skill_loader.py` | dynamic skill discovery and two-phase invocation |
+| `nanoclaw/core/tool_policy.py` | centralized tool risk classification and permission checks |
+| `nanoclaw/core/approval.py` | CLI/API approval gateway for risky tool calls |
+| `nanoclaw/core/tool_scheduler.py` | SafeToolNode scheduling, approval, locking, and retries |
+| `nanoclaw/core/tool_errors.py` | structured tool execution errors |
 | `nanoclaw/core/tools/builtins.py` | builtin tools for time, tasks, profile, and system info |
 | `nanoclaw/core/tools/sandbox_tools.py` | restricted file and shell execution |
+| `nanoclaw/core/tools/web_search.py` | optional current-information search tool |
 | `nanoclaw/core/heartbeat.py` | recurring task trigger loop |
 | `nanoclaw/core/logger.py` | JSONL audit event writer |
+| `nanoclaw/api/app.py` | FastAPI app factory and runtime lifespan |
+| `nanoclaw/api/routers/` | health, session, message, stream, event, and UI routes |
 | `entry/main.py` | interactive runtime entrypoint |
 | `entry/monitor.py` | live terminal monitor |
+
+### Runtime surfaces
+
+NanoClaw now has two runtime surfaces over the same core agent:
+
+```text
+nanoclaw run
+  -> terminal UI
+  -> create_agent_app()
+  -> LangGraph + tools + SQLite checkpoint + audit logs
+
+nanoclaw serve
+  -> FastAPI + built-in web UI
+  -> create_agent_app()
+  -> LangGraph + tools + SQLite checkpoint + audit logs
+```
+
+The API mode is not a separate agent. It is an HTTP protocol layer over the existing LangGraph runtime.
 
 ## Quick Start
 
@@ -157,10 +195,53 @@ OPENAI_API_KEY=sk-your-api-key
 OPENAI_API_BASE=https://coding.dashscope.aliyuncs.com/v1
 ```
 
+DeepSeek and Xiaomi MiMo are also supported through provider-specific keys:
+
+```bash
+DEFAULT_PROVIDER=deepseek
+DEFAULT_MODEL=deepseek-v4-flash
+DEEPSEEK_API_KEY=sk-your-key
+
+DEFAULT_PROVIDER=xiaomi
+DEFAULT_MODEL=your-mimo-model
+MIMO_API_KEY=tp-or-sk-your-key
+MIMO_API_BASE=https://api.xiaomimimo.com/v1
+```
+
+Optional web search:
+
+```bash
+TAVILY_API_KEY=tvly-your-key
+```
+
 ### Run
 
 ```bash
 nanoclaw run
+```
+
+### Serve API Runtime
+
+```bash
+nanoclaw serve --host 127.0.0.1 --port 8000
+```
+
+Open the built-in web UI:
+
+```text
+http://127.0.0.1:8000/
+```
+
+Development reload:
+
+```bash
+nanoclaw serve --reload
+```
+
+Direct uvicorn entrypoint:
+
+```bash
+uvicorn nanoclaw.api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 ### Monitor
@@ -171,6 +252,61 @@ In another terminal:
 nanoclaw monitor
 ```
 
+## API Runtime
+
+The FastAPI runtime exposes the same NanoClaw agent through HTTP.
+
+### Health
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+### Create a session
+
+```bash
+curl -X POST http://127.0.0.1:8000/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+### Send a message
+
+```bash
+curl -X POST http://127.0.0.1:8000/sessions/demo-thread/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"你好，简单介绍一下你自己"}'
+```
+
+### Stream graph updates
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/sessions/demo-thread/messages/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"列一下你会做什么"}'
+```
+
+### Read audit events
+
+```bash
+curl 'http://127.0.0.1:8000/sessions/demo-thread/events?limit=50'
+```
+
+### Resolve tool approval
+
+High-risk tool calls can pause waiting for approval. Pending approvals can be
+listed and resolved through the API:
+
+```bash
+curl 'http://127.0.0.1:8000/sessions/demo-thread/approvals'
+
+curl -X POST 'http://127.0.0.1:8000/sessions/demo-thread/approvals/call-123' \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"approved"}'
+```
+
+For the full runtime contract, see [API Runtime](docs/api-runtime.md).
+
 ## Example Capabilities
 
 NanoClaw is currently strongest on execution-oriented tasks such as:
@@ -179,8 +315,10 @@ NanoClaw is currently strongest on execution-oriented tasks such as:
 - simple and multi-step calculations
 - writing, reading, and listing files under `workspace/office`
 - running bounded shell commands
+- approving or denying high-risk shell execution
 - creating and modifying scheduled tasks
 - updating long-term user preferences
+- searching the web when `TAVILY_API_KEY` is configured
 - executing skill workflows through staged `help -> run`
 
 Example prompts:
@@ -220,19 +358,22 @@ That is a deliberate project choice: NanoClaw should eventually be something you
 
 NanoClaw's planned improvement direction is centered on software-engineering depth rather than feature inflation.
 
-Priority themes:
+Completed P0 themes:
 
 - **human-in-the-loop approvals** for risky actions
 - **centralized tool permission policy**
 - **better runtime reliability**
   - retries
-  - task states
-  - failure recovery
+  - structured tool errors
+  - side-effect locks
 - **stronger observability**
-  - richer trace fields
-  - better monitor surface
+  - policy and tool-batch audit events
+
+Remaining priority themes:
+
+- **task lifecycle states and recovery**
+- **richer trace fields and monitor surface**
 - **MCP lifecycle management**
-- **FastAPI service mode**
 - **multimodal input support**
 - **stronger skill registry / versioning / governance**
 
@@ -242,6 +383,9 @@ This roadmap matters because the project is meant to become more than a CLI demo
 
 - [Improvement Directions](docs/improvement-directions.md)
 - [Evaluation Baseline](docs/evaluation-baseline.md)
+- [API Runtime](docs/api-runtime.md)
+- [Project Notes](docs/project-notes.md)
+- [Changelog](docs/changelogs.md)
 
 ## Tests
 
