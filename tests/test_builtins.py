@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, mock_open
+from unittest.mock import Mock, patch, mock_open
 import os
 import sys
 import tempfile
@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from nanoclaw.core.tools.builtins import (
     get_current_time,
-    calculator
+    calculator,
+    web_search,
 )
 from nanoclaw.core.config import MEMORY_DIR, TASKS_FILE
 
@@ -80,6 +81,37 @@ class TestBuiltInTools(unittest.TestCase):
         with open(mock_profile_path, 'r', encoding='utf-8') as f:
             saved_content = f.read()
         self.assertEqual(saved_content, test_content)
+
+    def test_web_search_missing_api_key(self):
+        """测试 web search 未配置 API key"""
+        with patch.dict(os.environ, {}, clear=True):
+            result = web_search.invoke({"query": "OpenAI latest model"})
+
+        self.assertIn("missing TAVILY_API_KEY", result)
+
+    @patch("nanoclaw.core.tools.web_search.urllib.request.urlopen")
+    def test_web_search_returns_results(self, mock_urlopen):
+        """测试 web search 格式化搜索结果"""
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=None)
+        response.read.return_value = json.dumps({
+            "results": [
+                {
+                    "title": "Example result",
+                    "url": "https://example.com",
+                    "content": "Example summary",
+                }
+            ]
+        }).encode("utf-8")
+        mock_urlopen.return_value = response
+
+        with patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}):
+            result = web_search.invoke({"query": "test query", "max_results": 1})
+
+        self.assertIn("Example result", result)
+        self.assertIn("https://example.com", result)
+        self.assertIn("Example summary", result)
 
 
 class TestScheduledTasks(unittest.TestCase):

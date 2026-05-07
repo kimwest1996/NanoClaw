@@ -44,7 +44,17 @@ def config_wizard():
     ))
     provider_raw = questionary.select(
         "选择你的模型提供商 (Provider):",
-        choices=["openai", "anthropic", "aliyun (openai compatible)","tencent (openai compatible)", "z.ai (openai compatible)", "other (openai compatible)", "ollama"],
+        choices=[
+            "openai",
+            "anthropic",
+            "aliyun (openai compatible)",
+            "tencent (openai compatible)",
+            "z.ai (openai compatible)",
+            "deepseek",
+            "xiaomi",
+            "other (openai compatible)",
+            "ollama",
+        ],
         style=cyber_style,
         instruction="(按上下键选择，回车确认)"
     ).ask()
@@ -72,6 +82,10 @@ def config_wizard():
             env_key = "OPENAI_API_KEY"
         elif provider == "anthropic":
             env_key = "ANTHROPIC_API_KEY"
+        elif provider == "deepseek":
+            env_key = "DEEPSEEK_API_KEY"
+        elif provider == "xiaomi":
+            env_key = "MIMO_API_KEY"
 
         api_key = questionary.password(
             f"输入你的 {env_key} (对应 {provider_raw}):",
@@ -83,7 +97,7 @@ def config_wizard():
             return
 
     base_url = ""
-    if provider in ["openai", "anthropic"]:
+    if provider in ["openai", "anthropic", "deepseek", "xiaomi"]:
         base_url = questionary.text(
             f"输入 {provider} 代理 Base URL (直连请直接回车跳过):",
             style=cyber_style
@@ -112,6 +126,10 @@ def config_wizard():
             if base_url:
                 if is_openai_compatible:
                     os.environ["OPENAI_API_BASE"] = base_url
+                elif provider == "deepseek":
+                    os.environ["DEEPSEEK_API_BASE"] = base_url
+                elif provider == "xiaomi":
+                    os.environ["MIMO_API_BASE"] = base_url
                 else:
                     os.environ[f"{provider.upper()}_BASE_URL"] = base_url
 
@@ -133,6 +151,9 @@ def config_wizard():
 
     unset_key(ENV_PATH, "OPENAI_API_BASE")
     unset_key(ENV_PATH, "ANTHROPIC_BASE_URL")
+    unset_key(ENV_PATH, "DEEPSEEK_API_BASE")
+    unset_key(ENV_PATH, "MIMO_API_BASE")
+    unset_key(ENV_PATH, "XIAOMI_API_BASE")
     unset_key(ENV_PATH, "OLLAMA_BASE_URL")
 
     if env_key and api_key:
@@ -141,6 +162,10 @@ def config_wizard():
     if base_url:
         if is_openai_compatible:
             set_key(ENV_PATH, "OPENAI_API_BASE", base_url)
+        elif provider == "deepseek":
+            set_key(ENV_PATH, "DEEPSEEK_API_BASE", base_url)
+        elif provider == "xiaomi":
+            set_key(ENV_PATH, "MIMO_API_BASE", base_url)
         else:
             set_key(ENV_PATH, f"{provider.upper()}_BASE_URL", base_url)
     
@@ -177,7 +202,17 @@ def run_agent():
             if not os.getenv("OPENAI_API_KEY"):
                 _show_boot_error()
                 raise typer.Exit()
-                
+
+        elif provider == "deepseek":
+            if not os.getenv("DEEPSEEK_API_KEY"):
+                _show_boot_error()
+                raise typer.Exit()
+
+        elif provider == "xiaomi":
+            if not (os.getenv("MIMO_API_KEY") or os.getenv("XIAOMI_API_KEY")):
+                _show_boot_error()
+                raise typer.Exit()
+
         elif provider == "anthropic":
             if not os.getenv("ANTHROPIC_API_KEY"):
                 _show_boot_error()
@@ -185,6 +220,29 @@ def run_agent():
         
     import entry.main as nanoclaw_main
     nanoclaw_main.main()
+
+@app.command("serve")
+def serve_api(
+    host: str = typer.Option("127.0.0.1", "--host", help="API 监听地址"),
+    port: int = typer.Option(8000, "--port", help="API 监听端口"),
+    reload: bool = typer.Option(False, "--reload", help="启用开发热重载"),
+):
+    load_dotenv(ENV_PATH, override=True)
+    provider = os.getenv("DEFAULT_PROVIDER")
+    model = os.getenv("DEFAULT_MODEL")
+    if not provider or not model:
+        _show_boot_error()
+        raise typer.Exit()
+
+    import uvicorn
+
+    uvicorn.run(
+        "nanoclaw.api.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+    )
 
 @app.command("monitor")
 def run_monitor():    

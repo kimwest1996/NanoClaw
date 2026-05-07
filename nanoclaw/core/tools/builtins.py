@@ -11,6 +11,7 @@ from .sandbox_tools import (
     write_office_file,
     execute_office_shell
 )
+from .web_search import web_search
 
 
 tasks_lock = threading.Lock()
@@ -269,5 +270,6 @@ BUILTIN_TOOLS = [
     schedule_task,
     list_scheduled_tasks,
     delete_scheduled_task,
-    modify_scheduled_task
+    modify_scheduled_task,
+    web_search
 ]
