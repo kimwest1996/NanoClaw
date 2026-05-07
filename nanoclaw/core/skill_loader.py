@@ -79,6 +79,10 @@ def load_dynamic_skills() -> List[StructuredTool]:
                 description=mini_description,
                 args_schema=DynamicSkillInput
             )
+            dynamic_tool.metadata = {
+                "nanoclaw_execution": "dynamic_skill",
+                "nanoclaw_resource": "office",
+            }
             loaded_skills.append(dynamic_tool)
 
         except Exception as e:

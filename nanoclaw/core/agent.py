@@ -1,35 +1,86 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage
+from langgraph.prebuilt import tools_condition
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from .context import AgentState, trim_context_messages
-from .provider import get_provider
+from . import provider as provider_module
 from .tools.builtins import BUILTIN_TOOLS
 from .logger import audit_logger
 from .config import MEMORY_DIR
-from .skill_loader import load_dynamic_skills
+from . import skill_loader
+from .tool_scheduler import SafeToolNode
+from .tool_policy import ToolPolicy
 from langchain_core.runnables import RunnableConfig
 import os
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import ANSI
 
+
+REASONING_PROVIDERS = {"deepseek", "xiaomi"}
+
+
+def _message_reasoning_content(message: Any) -> Optional[str]:
+    if not isinstance(message, AIMessage):
+        return None
+    for source in (getattr(message, "additional_kwargs", None), getattr(message, "response_metadata", None)):
+        if isinstance(source, dict):
+            value = source.get("reasoning_content")
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
+def _serialize_for_reasoning_replay(message: Any) -> Any:
+    if isinstance(message, SystemMessage):
+        return {"role": "system", "content": message.content}
+    if isinstance(message, HumanMessage):
+        return {"role": "user", "content": message.content}
+    if isinstance(message, ToolMessage):
+        return {
+            "role": "tool",
+            "content": message.content,
+            "tool_call_id": getattr(message, "tool_call_id", None),
+        }
+    if isinstance(message, AIMessage):
+        additional_kwargs = getattr(message, "additional_kwargs", None)
+        payload: dict[str, Any] = {
+            "role": "assistant",
+            "content": message.content or "",
+        }
+        reasoning_content = _message_reasoning_content(message)
+        if reasoning_content:
+            payload["reasoning_content"] = reasoning_content
+        tool_calls = None
+        if isinstance(additional_kwargs, dict):
+            raw_tool_calls = additional_kwargs.get("tool_calls")
+            if isinstance(raw_tool_calls, list) and raw_tool_calls:
+                tool_calls = raw_tool_calls
+        if tool_calls is None:
+            tool_calls = getattr(message, "tool_calls", None)
+        if tool_calls:
+            payload["tool_calls"] = tool_calls
+        return payload
+    return message
+
 def create_agent_app(
     provider_name: str = "openai",
     model_name: str = "gpt-4o-mini",
     tools: Optional[List[BaseTool]] = None,
-    checkpointer = None
+    checkpointer = None,
+    policy: Optional[ToolPolicy] = None,
 ):
+    normalized_provider = provider_name.lower()
     if tools is None:
-        dynamic_tools = load_dynamic_skills()
+        dynamic_tools = skill_loader.load_dynamic_skills()
         actual_tools = BUILTIN_TOOLS + dynamic_tools
     else:
         actual_tools = tools
     
     
-    tool_node = ToolNode(actual_tools)
+    tool_node = SafeToolNode(actual_tools, policy=policy)
 
-    llm = get_provider(provider_name=provider_name, model_name=model_name)
+    llm = provider_module.get_provider(provider_name=provider_name, model_name=model_name)
     llm_with_tools = llm.bind_tools(actual_tools)
 
     def agent_node(state: AgentState, config: RunnableConfig) -> dict:
@@ -103,6 +154,7 @@ def create_agent_app(
             "2. 【双脑协同】：在回答时，你必须综合考量下方的【用户长期画像】（对方的习惯与底线）与【近期对话上下文】（目前的任务进度）。\n"
             "3. 【记忆进化】：当你敏锐地捕捉到用户提及了新的长期偏好、个人信息，或要求你“记住某事”时，必须主动调用 'save_user_profile' 工具更新画像。\n"
             "4. 保持简练，直接回应用户【最新】的一句话。并且要很自然地，像一个非常了解用户的好朋友一样，禁止说'根据你的用户画像'类似的机器人回答\n"
+            "5. 【工具并发规则】：只读查询工具可以在同一轮批量调用；写入记忆、写入文件、Shell执行、任务新增/删除/修改、动态技能 run 等有副作用工具，每一轮最多调用一个，且不要和其他副作用工具同批调用。\n"
             "🛑 【最高安全指令 (SANDBOX PROTOCOL)】 🛑\n"
             "你当前运行在一个受限的局域沙盒 (office 工位) 中。系统已在底层部署了严格的监控矩阵，你必须绝对遵守以下红线：\n"
             "1. 绝对禁止尝试“越狱 (Jailbreak)”或越权访问沙盒外部的文件系统（如 /etc, /home, C:\\ 等）。\n"
@@ -128,14 +180,20 @@ def create_agent_app(
             if isinstance(m.content, str):
                 m.content = m.content.encode('utf-8', 'ignore').decode('utf-8')
 
+        llm_input_messages: list[Any]
+        if normalized_provider in REASONING_PROVIDERS:
+            llm_input_messages = [_serialize_for_reasoning_replay(m) for m in msgs_for_llm]
+        else:
+            llm_input_messages = msgs_for_llm
+
         # 记录即将发送给发模型的消息 (监控Token)
         audit_logger.log_event(
             thread_id=thread_id,
             event="llm_input",
-            message_count=len(msgs_for_llm)
+            message_count=len(llm_input_messages)
         )
 
-        response = llm_with_tools.invoke(msgs_for_llm)
+        response = llm_with_tools.invoke(llm_input_messages)
 
         # 解析大模型的回答并记录到日志
         if response.tool_calls:

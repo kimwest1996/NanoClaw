@@ -3,8 +3,12 @@ import sys
 import time
 import asyncio
 import random
+import shlex
+from typing import Optional
+import questionary
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from dotenv import set_key
 
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -13,9 +17,27 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.application import get_app
 
 from nanoclaw.core.agent import create_agent_app
+from nanoclaw.core.approval import cli_approval_callback
 from nanoclaw.core.config import DB_PATH
 from nanoclaw.core.bus import task_queue
 from nanoclaw.core.heartbeat import pacemaker_loop
+
+KNOWN_PROVIDERS = {"openai", "anthropic", "aliyun", "dashscope", "tencent", "z.ai", "deepseek", "xiaomi", "ollama", "other"}
+MODEL_CATALOG = {
+    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"],
+    "xiaomi": ["mimo-v2-flash", "mimo-v2-pro", "mimo-v2-omni", "mimo-v2.5", "mimo-v2.5-pro"],
+}
+
+def api_key_env_for_provider(provider: str) -> Optional[str]:
+    if provider == "ollama":
+        return None
+    if provider == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    if provider == "deepseek":
+        return "DEEPSEEK_API_KEY"
+    if provider == "xiaomi":
+        return "MIMO_API_KEY"
+    return "OPENAI_API_KEY"
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -87,6 +109,36 @@ def cprint(text="", end="\n"):
     print_formatted_text(ANSI(str(text)), end=end)
 
 
+def parse_model_command(user_input: str, current_provider: str) -> tuple:
+    try:
+        parts = shlex.split(user_input)
+    except ValueError as exc:
+        return current_provider, "", False, f"命令解析失败：{exc}"
+    save = False
+    filtered_parts = []
+    for part in parts:
+        if part == "--save":
+            save = True
+        else:
+            filtered_parts.append(part)
+    parts = filtered_parts
+
+    if len(parts) == 1:
+        return current_provider, "", save, "interactive"
+
+    if len(parts) == 2 and parts[1] in ["help", "-h", "--help"]:
+        return current_provider, "", save, "help"
+
+    if len(parts) == 2:
+        return current_provider, parts[1], save, None
+
+    provider = parts[1].lower()
+    model = parts[2]
+    if provider not in KNOWN_PROVIDERS:
+        return current_provider, "", save, f"未知 provider：{provider}"
+    return provider, model, save, None
+
+
 async def async_main():
     print_banner()
     
@@ -100,6 +152,137 @@ async def async_main():
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
         app = create_agent_app(provider_name=current_provider, model_name=current_model, checkpointer=memory)
         config = {"configurable": {"thread_id": "local_geek_master"}}
+
+        def reload_runtime_env():
+            load_dotenv(env_path, override=True)
+
+        def print_model_help():
+            cprint("  \033[38;5;141m/model 用法\033[0m")
+            cprint("    /model                              打开交互式模型选择器")
+            cprint("    /model help                         查看当前模型和命令帮助")
+            cprint("    /model <model>                      切换当前 provider 下的模型")
+            cprint("    /model <provider> <model>           切换 provider 和模型")
+            cprint("    /model <provider> <model> --save    切换并写回 .env")
+            cprint("    示例：/model deepseek deepseek-v4-flash")
+            cprint("    示例：/model xiaomi mimo-v2-flash --save")
+
+        def apply_model_switch(provider: str, model: str, save: bool) -> bool:
+            nonlocal app, current_provider, current_model
+
+            try:
+                new_app = create_agent_app(provider_name=provider, model_name=model, checkpointer=memory)
+            except Exception as exc:
+                cprint(f"  \033[31m[ 模型切换失败：{exc} ]\033[0m")
+                return False
+
+            app = new_app
+            current_provider = provider
+            current_model = model
+            os.environ["DEFAULT_PROVIDER"] = provider
+            os.environ["DEFAULT_MODEL"] = model
+
+            if save:
+                set_key(env_path, "DEFAULT_PROVIDER", provider)
+                set_key(env_path, "DEFAULT_MODEL", model)
+
+            suffix = "，已写回 .env" if save else "，仅当前会话生效"
+            cprint(f"  \033[38;5;51m✦ 已切换模型：{provider} / {model}{suffix}\033[0m")
+            return True
+
+        async def ensure_provider_key(provider: str, save: bool) -> bool:
+            env_key = api_key_env_for_provider(provider)
+            if env_key is None or os.getenv(env_key):
+                return True
+
+            cprint(f"  \033[38;5;214m当前缺少 {env_key}，需要先录入该 provider 的 API Key。\033[0m")
+            api_key = await questionary.password(f"输入 {env_key}:").ask_async()
+            if not api_key:
+                cprint("  \033[38;5;242m已取消模型切换。\033[0m")
+                return False
+
+            os.environ[env_key] = api_key
+            if save:
+                set_key(env_path, env_key, api_key)
+            return True
+
+        async def open_model_picker() -> bool:
+            provider_choices = [
+                questionary.Choice(title=f"{provider} (current)", value=provider)
+                if provider == current_provider else provider
+                for provider in ["deepseek", "xiaomi", "openai", "anthropic", "aliyun", "dashscope", "tencent", "z.ai", "ollama", "other"]
+            ]
+            provider = await questionary.select(
+                "选择 Provider:",
+                choices=provider_choices,
+                default=current_provider if current_provider in KNOWN_PROVIDERS else "deepseek",
+            ).ask_async()
+            if not provider:
+                cprint("  \033[38;5;242m已取消模型切换。\033[0m")
+                return True
+
+            known_models = MODEL_CATALOG.get(provider, [])
+            if known_models:
+                model_choices = [
+                    questionary.Choice(title=f"{model} (current)", value=model)
+                    if provider == current_provider and model == current_model else model
+                    for model in known_models
+                ]
+                model_choices.append(questionary.Choice(title="手动输入其他模型名", value="__custom__"))
+                model = await questionary.select(
+                    "选择模型:",
+                    choices=model_choices,
+                    default=current_model if current_model in known_models else known_models[0],
+                ).ask_async()
+                if model == "__custom__":
+                    model = await questionary.text("输入模型名:", default=current_model if provider == current_provider else "").ask_async()
+            else:
+                model = await questionary.text("输入模型名:", default=current_model if provider == current_provider else "").ask_async()
+
+            if not model:
+                cprint("  \033[38;5;242m已取消模型切换。\033[0m")
+                return True
+
+            save = await questionary.confirm("是否写回 .env，作为下次启动默认模型？", default=False).ask_async()
+            if save is None:
+                cprint("  \033[38;5;242m已取消模型切换。\033[0m")
+                return True
+
+            if not await ensure_provider_key(provider, bool(save)):
+                return True
+
+            confirmed = await questionary.confirm(f"确认切换到 {provider} / {model}？", default=True).ask_async()
+            if not confirmed:
+                cprint("  \033[38;5;242m已取消模型切换。\033[0m")
+                return True
+
+            apply_model_switch(provider, model, bool(save))
+            return True
+
+        async def switch_model_command(user_input: str) -> bool:
+            reload_runtime_env()
+            provider, model, save, error = parse_model_command(user_input, current_provider)
+            if error == "interactive":
+                return await open_model_picker()
+            if error == "help":
+                cprint(f"  \033[38;5;51m当前模型：{current_provider} / {current_model}\033[0m")
+                print_model_help()
+                return True
+            if error:
+                cprint(f"  \033[31m[ /model 错误：{error} ]\033[0m")
+                print_model_help()
+                return True
+            if not model:
+                cprint("  \033[31m[ /model 错误：缺少模型名 ]\033[0m")
+                print_model_help()
+                return True
+
+            env_key = api_key_env_for_provider(provider)
+            if env_key and not os.getenv(env_key):
+                cprint(f"  \033[31m[ 模型切换失败：缺少 {env_key}。请先在 .env 中配置，或直接输入 /model 使用交互式选择器录入。]\033[0m")
+                return True
+
+            apply_model_switch(provider, model, save)
+            return True
 
         class SpinnerState:
             action_words = [
@@ -152,6 +335,12 @@ async def async_main():
                 if user_input.lower() in ["/exit", "/quit"]:
                     task_queue.task_done()
                     break
+                first_token = user_input.split(maxsplit=1)[0].lower()
+                if first_token == "/model":
+                    await switch_model_command(user_input)
+                    cprint()
+                    task_queue.task_done()
+                    continue
                 
                 spinner.current_words = spinner.action_words.copy()
                 random.shuffle(spinner.current_words)
@@ -161,8 +350,15 @@ async def async_main():
                 spinner.is_tool_calling = False
                 
                 inputs = {"messages": [HumanMessage(content=user_input)]}
+                run_config = {
+                    **config,
+                    "configurable": {
+                        **config.get("configurable", {}),
+                        "approval_callback": cli_approval_callback,
+                    },
+                }
                 try:
-                    async for event in app.astream(inputs, config=config, stream_mode="updates"):
+                    async for event in app.astream(inputs, config=run_config, stream_mode="updates"):
                         for node_name, node_data in event.items():
                             if node_name == "agent":
                                 last_msg = node_data["messages"][-1]
@@ -230,6 +426,12 @@ async def async_main():
 
                     padded_bubble = f"  ❯ {user_input}    "
                     cprint(f"\033[48;2;38;38;38m\033[38;5;255m{padded_bubble}\033[0m\n")
+
+                    first_token = user_input.split(maxsplit=1)[0].lower()
+                    if first_token == "/model":
+                        await switch_model_command(user_input)
+                        cprint()
+                        continue
                     
                     await task_queue.put(user_input)
                     if user_input.lower() in ["/exit", "/quit"]:
