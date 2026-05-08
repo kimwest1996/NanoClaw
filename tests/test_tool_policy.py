@@ -5,8 +5,10 @@ from nanoclaw.core.tool_policy import (
     PolicyResult,
     ToolPolicy,
     ToolPolicyEntry,
+    ToolPoolMode,
     ToolRiskLevel,
     default_policy,
+    get_tools_for_mode,
 )
 
 
@@ -123,6 +125,73 @@ class TestDefaultPolicy(unittest.TestCase):
     def test_args_parameter_accepted(self):
         result = self.policy.check("execute_office_shell", {"command": "ls"})
         self.assertEqual(result.action, PolicyAction.NEED_APPROVAL)
+
+
+class TestToolPoolMode(unittest.TestCase):
+    """Test tool pool mode filtering."""
+
+    def _make_mock_tools(self, names):
+        """Create mock tool objects with .name attribute."""
+        tools = []
+        for name in names:
+            t = type("MockTool", (), {"name": name})()
+            tools.append(t)
+        return tools
+
+    def test_full_mode_returns_all(self):
+        all_names = [
+            "get_current_time", "calculator", "execute_office_shell",
+            "write_office_file", "web_search",
+        ]
+        tools = self._make_mock_tools(all_names)
+        result = get_tools_for_mode(ToolPoolMode.FULL, tools)
+        self.assertEqual([t.name for t in result], all_names)
+
+    def test_safe_mode_only_readonly(self):
+        all_names = [
+            "get_current_time", "calculator", "get_system_model_info",
+            "list_office_files", "read_office_file", "list_scheduled_tasks", "web_search",
+            "save_user_profile", "write_office_file", "execute_office_shell",
+            "schedule_task", "delete_scheduled_task", "modify_scheduled_task",
+        ]
+        tools = self._make_mock_tools(all_names)
+        result = get_tools_for_mode(ToolPoolMode.SAFE, tools)
+        result_names = {t.name for t in result}
+        expected = {
+            "get_current_time", "calculator", "get_system_model_info",
+            "list_office_files", "read_office_file", "list_scheduled_tasks", "web_search",
+        }
+        self.assertEqual(result_names, expected)
+
+    def test_no_shell_mode_excludes_shell(self):
+        all_names = [
+            "get_current_time", "calculator", "execute_office_shell",
+            "write_office_file", "save_user_profile",
+        ]
+        tools = self._make_mock_tools(all_names)
+        result = get_tools_for_mode(ToolPoolMode.NO_SHELL, tools)
+        result_names = {t.name for t in result}
+        self.assertNotIn("execute_office_shell", result_names)
+        self.assertIn("write_office_file", result_names)
+        self.assertEqual(len(result), 4)
+
+    def test_safe_mode_preserves_dynamic_skills(self):
+        """Dynamic skills with read-only names should be kept in safe mode."""
+        all_names = [
+            "get_current_time", "list_office_files",
+            "my_custom_skill",  # not in read-only set
+        ]
+        tools = self._make_mock_tools(all_names)
+        result = get_tools_for_mode(ToolPoolMode.SAFE, tools)
+        result_names = {t.name for t in result}
+        self.assertIn("get_current_time", result_names)
+        self.assertIn("list_office_files", result_names)
+        self.assertNotIn("my_custom_skill", result_names)
+
+    def test_mode_enum_values(self):
+        self.assertEqual(ToolPoolMode.SAFE.value, "safe")
+        self.assertEqual(ToolPoolMode.NO_SHELL.value, "no_shell")
+        self.assertEqual(ToolPoolMode.FULL.value, "full")
 
 
 if __name__ == "__main__":

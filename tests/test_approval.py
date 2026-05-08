@@ -27,7 +27,7 @@ def _make_request(tool_name: str = "execute_office_shell", tool_call_id: str = "
 class TestAutoApproveCallback(unittest.TestCase):
     def test_returns_approved(self):
         request = _make_request()
-        result = asyncio.get_event_loop().run_until_complete(auto_approve_callback(request))
+        result = asyncio.new_event_loop().run_until_complete(auto_approve_callback(request))
         self.assertEqual(result.decision, ApprovalDecision.APPROVED)
         self.assertIn("auto-approved", result.reason)
 
@@ -35,7 +35,7 @@ class TestAutoApproveCallback(unittest.TestCase):
 class TestAutoDenyCallback(unittest.TestCase):
     def test_returns_denied(self):
         request = _make_request()
-        result = asyncio.get_event_loop().run_until_complete(auto_deny_callback(request))
+        result = asyncio.new_event_loop().run_until_complete(auto_deny_callback(request))
         self.assertEqual(result.decision, ApprovalDecision.DENIED)
         self.assertIn("auto-denied", result.reason)
 
@@ -67,7 +67,7 @@ class TestCreateApiApprovalCallback(unittest.TestCase):
         async def main():
             await asyncio.gather(run(), resolve_later())
 
-        asyncio.get_event_loop().run_until_complete(main())
+        asyncio.new_event_loop().run_until_complete(main())
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].decision, ApprovalDecision.APPROVED)
         # Pending should be cleaned up
@@ -91,7 +91,7 @@ class TestCreateApiApprovalCallback(unittest.TestCase):
 
         asyncio.wait_for = fast_wait_for
         try:
-            result = asyncio.get_event_loop().run_until_complete(run())
+            result = asyncio.new_event_loop().run_until_complete(run())
         finally:
             asyncio.wait_for = original_wait_for
 
@@ -118,7 +118,7 @@ class TestCreateApiApprovalCallback(unittest.TestCase):
         async def main():
             await asyncio.gather(run(), resolve_deny())
 
-        asyncio.get_event_loop().run_until_complete(main())
+        asyncio.new_event_loop().run_until_complete(main())
         self.assertEqual(results[0].decision, ApprovalDecision.DENIED)
 
 

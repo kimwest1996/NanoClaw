@@ -190,7 +190,9 @@ def _show_boot_error():
 
 
 @app.command("run")
-def run_agent():
+def run_agent(
+    mode: str = typer.Option("full", "--mode", help="Tool pool mode: safe / no_shell / full"),
+):
     load_dotenv(ENV_PATH)
     provider = os.getenv("DEFAULT_PROVIDER")
     model = os.getenv("DEFAULT_MODEL")
@@ -218,8 +220,14 @@ def run_agent():
                 _show_boot_error()
                 raise typer.Exit()
         
+    from nanoclaw.core.tool_policy import ToolPoolMode
     import entry.main as nanoclaw_main
-    nanoclaw_main.main()
+    try:
+        pool_mode = ToolPoolMode(mode.lower().strip())
+    except ValueError:
+        typer.echo(f"Unknown mode: {mode}. Use: safe / no_shell / full")
+        raise typer.Exit(1)
+    nanoclaw_main.main(mode=pool_mode)
 
 @app.command("serve")
 def serve_api(

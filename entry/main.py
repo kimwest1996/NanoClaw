@@ -19,8 +19,10 @@ from prompt_toolkit.application import get_app
 from nanoclaw.core.agent import create_agent_app
 from nanoclaw.core.approval import cli_approval_callback
 from nanoclaw.core.config import DB_PATH
+from nanoclaw.core.tool_policy import ToolPoolMode
 from nanoclaw.core.bus import task_queue
 from nanoclaw.core.heartbeat import pacemaker_loop
+from nanoclaw.core.mcp_manager import MCPManager
 
 KNOWN_PROVIDERS = {"openai", "anthropic", "aliyun", "dashscope", "tencent", "z.ai", "deepseek", "xiaomi", "ollama", "other"}
 MODEL_CATALOG = {
@@ -139,7 +141,7 @@ def parse_model_command(user_input: str, current_provider: str) -> tuple:
     return provider, model, save, None
 
 
-async def async_main():
+async def async_main(mode: Optional[ToolPoolMode] = None):
     print_banner()
     
     from dotenv import load_dotenv
@@ -150,7 +152,14 @@ async def async_main():
     current_model = os.getenv("DEFAULT_MODEL", "glm-5")
 
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
-        app = create_agent_app(provider_name=current_provider, model_name=current_model, checkpointer=memory)
+        # 启动 MCP
+        mcp_manager = MCPManager()
+        mcp_tools = await mcp_manager.start()
+        if mcp_tools:
+            cprint(f"  \033[38;5;51m✦ MCP: 已加载 {len(mcp_tools)} 个外部工具\033[0m")
+
+        current_mode = mode or ToolPoolMode.FULL
+        app = create_agent_app(provider_name=current_provider, model_name=current_model, checkpointer=memory, mode=current_mode, mcp_tools=mcp_tools)
         config = {"configurable": {"thread_id": "local_geek_master"}}
 
         def reload_runtime_env():
@@ -170,7 +179,7 @@ async def async_main():
             nonlocal app, current_provider, current_model
 
             try:
-                new_app = create_agent_app(provider_name=provider, model_name=model, checkpointer=memory)
+                new_app = create_agent_app(provider_name=provider, model_name=model, checkpointer=memory, mode=current_mode)
             except Exception as exc:
                 cprint(f"  \033[31m[ 模型切换失败：{exc} ]\033[0m")
                 return False
@@ -330,6 +339,7 @@ async def async_main():
         placeholder_text = ANSI("\033[3m\033[38;5;242minput...\033[0m")
 
         async def agent_worker():
+            nonlocal app, current_mode
             while True:
                 user_input = await task_queue.get()
                 if user_input.lower() in ["/exit", "/quit"]:
@@ -338,6 +348,39 @@ async def async_main():
                 first_token = user_input.split(maxsplit=1)[0].lower()
                 if first_token == "/model":
                     await switch_model_command(user_input)
+                    cprint()
+                    task_queue.task_done()
+                    continue
+
+                if first_token == "/mode":
+                    parts = user_input.split(maxsplit=1)
+                    if len(parts) < 2 or parts[1].strip().lower() not in ("safe", "no_shell", "full"):
+                        cprint("  \033[38;5;141m/mode 用法\033[0m")
+                        cprint("    /mode safe       只加载只读工具（演示/教学）")
+                        cprint("    /mode no_shell   除 shell 外全部加载（日常使用）")
+                        cprint("    /mode full       全部工具（开发调试）")
+                        cprint(f"  当前模式：\033[1m{current_mode.value}\033[0m")
+                    else:
+                        new_mode = ToolPoolMode(parts[1].strip().lower())
+                        current_mode = new_mode
+                        app = create_agent_app(
+                            provider_name=current_provider,
+                            model_name=current_model,
+                            checkpointer=memory,
+                            mode=current_mode,
+                            mcp_tools=mcp_tools,
+                        )
+                        cprint(f"  \033[32m✓ 工具模式已切换为：{current_mode.value}\033[0m")
+                    cprint()
+                    task_queue.task_done()
+                    continue
+
+                if first_token == "/mcp":
+                    cprint(f"  \033[38;5;141m{mcp_manager.status()}\033[0m")
+                    if mcp_tools:
+                        cprint("  \033[38;5;141mMCP 工具列表:\033[0m")
+                        for t in mcp_tools:
+                            cprint(f"    - {t.name}")
                     cprint()
                     task_queue.task_done()
                     continue
@@ -448,13 +491,16 @@ async def async_main():
         with patch_stdout():
             worker = asyncio.create_task(agent_worker())
             heartbeat_worker = asyncio.create_task(pacemaker_loop(check_interval=10))
-            await user_input_loop()
-            await task_queue.join()
-            worker.cancel()
-            heartbeat_worker.cancel()
+            try:
+                await user_input_loop()
+                await task_queue.join()
+            finally:
+                worker.cancel()
+                heartbeat_worker.cancel()
+                await mcp_manager.stop()
 
-def main():
-    asyncio.run(async_main())
+def main(mode: Optional[ToolPoolMode] = None):
+    asyncio.run(async_main(mode=mode))
 
 if __name__ == "__main__":
     main()

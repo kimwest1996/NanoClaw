@@ -124,6 +124,50 @@ class ToolPolicy:
         )
 
 
+class ToolPoolMode(Enum):
+    """Runtime mode controlling which tools are available."""
+    SAFE = "safe"
+    NO_SHELL = "no_shell"
+    FULL = "full"
+
+
+# Read-only tool names — safe for all modes
+_READ_ONLY_TOOL_NAMES = {
+    "get_current_time",
+    "calculator",
+    "get_system_model_info",
+    "list_office_files",
+    "read_office_file",
+    "list_scheduled_tasks",
+    "web_search",
+}
+
+# Shell tool — excluded in no_shell mode
+_SHELL_TOOL_NAME = "execute_office_shell"
+
+
+def get_tools_for_mode(mode: ToolPoolMode, all_tools: list) -> list:
+    """Filter tool list based on runtime mode.
+
+    Args:
+        mode: The desired tool pool mode.
+        all_tools: Full list of available tools.
+
+    Returns:
+        Filtered tool list for the given mode.
+    """
+    if mode == ToolPoolMode.FULL:
+        return all_tools
+
+    if mode == ToolPoolMode.SAFE:
+        return [t for t in all_tools if t.name in _READ_ONLY_TOOL_NAMES]
+
+    if mode == ToolPoolMode.NO_SHELL:
+        return [t for t in all_tools if t.name != _SHELL_TOOL_NAME]
+
+    return all_tools
+
+
 def default_policy() -> ToolPolicy:
     """Create the default policy with all 13 built-in tools mapped."""
     tool_entries = {
@@ -145,7 +189,12 @@ def default_policy() -> ToolPolicy:
         # HIGH — shell execution, requires approval
         "execute_office_shell": ToolPolicyEntry(ToolRiskLevel.HIGH, needs_approval=True),
     }
+    prefix_entries = {
+        # MCP tools — external, moderate risk
+        "mcp_": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
+    }
     return ToolPolicy(
         tool_entries=tool_entries,
+        prefix_entries=prefix_entries,
         approval_threshold=ToolRiskLevel.HIGH,
     )

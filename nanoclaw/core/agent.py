@@ -10,7 +10,7 @@ from .logger import audit_logger
 from .config import MEMORY_DIR
 from . import skill_loader
 from .tool_scheduler import SafeToolNode
-from .tool_policy import ToolPolicy
+from .tool_policy import ToolPolicy, ToolPoolMode, get_tools_for_mode
 from langchain_core.runnables import RunnableConfig
 import os
 from prompt_toolkit import print_formatted_text
@@ -69,6 +69,8 @@ def create_agent_app(
     tools: Optional[List[BaseTool]] = None,
     checkpointer = None,
     policy: Optional[ToolPolicy] = None,
+    mode: Optional[ToolPoolMode] = None,
+    mcp_tools: Optional[List[BaseTool]] = None,
 ):
     normalized_provider = provider_name.lower()
     if tools is None:
@@ -76,6 +78,12 @@ def create_agent_app(
         actual_tools = BUILTIN_TOOLS + dynamic_tools
     else:
         actual_tools = tools
+
+    if mcp_tools:
+        actual_tools = actual_tools + mcp_tools
+
+    if mode and mode != ToolPoolMode.FULL:
+        actual_tools = get_tools_for_mode(mode, actual_tools)
     
     
     tool_node = SafeToolNode(actual_tools, policy=policy)
