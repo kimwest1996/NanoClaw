@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, Syst
 from .context import AgentState, trim_context_messages
 from . import provider as provider_module
 from .tools.builtins import BUILTIN_TOOLS
-from .logger import audit_logger
+from .logger import audit_logger, trace_ctx
 from .config import MEMORY_DIR
 from . import skill_loader
 from .tool_scheduler import SafeToolNode
@@ -72,6 +72,8 @@ def create_agent_app(
     mode: Optional[ToolPoolMode] = None,
     mcp_tools: Optional[List[BaseTool]] = None,
 ):
+    # 初始化 trace session
+    session_id = trace_ctx.reset_session()
     normalized_provider = provider_name.lower()
     if tools is None:
         dynamic_tools = skill_loader.load_dynamic_skills()

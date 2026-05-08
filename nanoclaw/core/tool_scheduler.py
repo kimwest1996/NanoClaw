@@ -14,7 +14,7 @@ from langchain_core.tools import BaseTool, tool as create_tool
 from langgraph.utils.runnable import RunnableCallable
 
 from .approval import ApprovalCallback, ApprovalDecision, ApprovalRequest
-from .logger import audit_logger
+from .logger import audit_logger, trace_ctx
 from .tool_errors import ToolErrorCode, ToolExecutionError
 from .tool_policy import PolicyAction, ToolPolicy, default_policy
 
@@ -280,7 +280,22 @@ class SafeToolNode(RunnableCallable):
     ) -> ToolMessage:
         resource = policy.resource or "custom"
         lock = _RESOURCE_LOCKS.setdefault(resource, threading.Lock())
-        return await asyncio.to_thread(self._run_one_with_retry, call, config, lock)
+        span_id = trace_ctx.new_span_id()
+        t0 = time.monotonic()
+        result = await asyncio.to_thread(self._run_one_with_retry, call, config, lock)
+        duration = (time.monotonic() - t0) * 1000
+        error_code = None
+        if hasattr(result, 'status') and result.status == "error":
+            error_code = "EXECUTION_ERROR"
+        audit_logger.log_event(
+            event="tool_scheduler",
+            tool_name=str(call.get("name", "")),
+            duration_ms=duration,
+            span_id=span_id,
+            status=getattr(result, 'status', 'success'),
+            error_code=error_code,
+        )
+        return result
 
     def _run_one_with_retry(
         self,

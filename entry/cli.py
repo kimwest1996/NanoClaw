@@ -261,6 +261,72 @@ def run_monitor():
     except ImportError as e:
         console.print(f"[bold red]启动失败：找不到监视器模块！[/bold red]\n[dim]请确保 monitor.py 和 cli.py 在同一目录下。\n报错信息: {e}[/dim]")
 
+@app.command("doctor")
+def doctor():
+    """运行系统诊断，检查环境/提供商/工作空间等健康状态"""
+    load_dotenv(ENV_PATH)
+
+    from nanoclaw.core.doctor import Doctor, CheckStatus
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+
+    console.print(Panel(
+        "[bold #8d52ff]✦  NanoClaw 系统诊断[/bold #8d52ff]",
+        border_style="#8d52ff"
+    ))
+
+    doc = Doctor()
+    results = doc.run_all()
+
+    table = Table(box=None, padding=(0, 2))
+    table.add_column("项目", style="#8d52ff bold", width=14)
+    table.add_column("状态", width=8)
+    table.add_column("信息", style="#a0a0a0", no_wrap=False)
+    table.add_column("耗时", style="#585858", width=8, justify="right")
+
+    status_map = {
+        CheckStatus.PASS: ("[bold green]✓ PASS[/bold green]", "green"),
+        CheckStatus.WARN: ("[bold yellow]⚠ WARN[/bold yellow]", "yellow"),
+        CheckStatus.FAIL: ("[bold red]✗ FAIL[/bold red]", "red"),
+        CheckStatus.SKIP: ("[dim]– SKIP[/dim]", "dim"),
+    }
+
+    has_fail = False
+    for r in results:
+        label, color = status_map.get(r.status, ("???", "white"))
+        table.add_row(r.name, label, r.message[:80], f"{r.duration_ms:.0f}ms")
+        if r.status == CheckStatus.FAIL:
+            has_fail = True
+
+    console.print()
+    console.print(table)
+    console.print()
+
+    # 显示建议和详情
+    suggestions = [r for r in results if r.suggestion]
+    if suggestions:
+        console.print("[bold #ffa500]📋 建议[/bold #ffa500]")
+        for r in suggestions:
+            console.print(f"  [{status_map[r.status][1]}]{r.name}[/]: {r.suggestion}")
+        console.print()
+
+    # 显示详细诊断数据
+    if any(r.details for r in results):
+        console.print("[bold #585858]📊 详细信息[/bold #585858]")
+        for r in results:
+            if r.details:
+                import json as _json
+                console.print(f"  [{status_map[r.status][1]}]{r.name}[/]: "
+                              f"{_json.dumps(r.details, ensure_ascii=False, indent=2)}")
+        console.print()
+
+    if has_fail:
+        console.print("[bold red]❌ 诊断未通过，请根据建议修复后重试[/bold red]")
+    else:
+        console.print("[bold green]✅ 系统一切正常[/bold green]")
+
+
 def main():
     app()
 
