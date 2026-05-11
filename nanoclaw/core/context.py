@@ -5,9 +5,13 @@ from langgraph.graph.message import add_messages
 class AgentState(TypedDict):
     # 存储对话历史。
     messages: Annotated[list[BaseMessage], add_messages]
-    
+
     # 摘要压缩
     summary: str
+
+    # 子代理追踪（可选）
+    subagent_tasks: list[dict]       # 当前运行中的子代理列表
+    subagent_results: list[str]      # 已完成子代理的结果
 
 def trim_context_messages(messages: list[BaseMessage], trigger_turns: int = 8, keep_turns: int = 4) -> tuple[list[BaseMessage], list[BaseMessage]]:
     # 按照完整用户回合来裁剪上下文：即 一个会从从HumanMessage开始，直到下一个HumanMessage结束，会把AIMessage、tool_calls、ToolMessage一并保留

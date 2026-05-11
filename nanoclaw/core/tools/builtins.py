@@ -258,6 +258,34 @@ def modify_scheduled_task(task_id: str, new_time: str = None, new_description: s
             return f"操作异常：{str(e)}"
 
 
+@nanoclaw_tool
+def spawn_subagent(description: str, timeout: int = 120) -> str:
+    """在后台启动一个子代理来独立执行任务。子代理可以使用只读工具（读文件、搜代码、查网页）来分析。
+
+    使用场景：
+    - 需要同时调研多个方向
+    - 长时间分析（如审阅整个项目结构）
+    - 可以并行执行的独立子任务
+
+    子代理会在后台异步执行（最多 5 个并发），结果在后续回合自动收集。
+
+    Args:
+        description: 子代理的任务描述，越清晰越好
+        timeout: 最大执行时间（秒），默认 120，最大 600
+    """
+    from ..subagent import get_subagent_manager
+    mgr = get_subagent_manager()
+    safe_timeout = min(float(timeout), 600.0)
+    task_id = mgr.spawn(description, safe_timeout)
+    return (
+        f"✅ 子代理已启动\n"
+        f"  ID: {task_id[:8]}\n"
+        f"  任务: {description}\n"
+        f"  超时: {timeout}s\n"
+        f"  状态: PENDING（排队中，最多同时运行 5 个）"
+    )
+
+
 BUILTIN_TOOLS = [
     get_current_time,
     calculator,
@@ -271,5 +299,6 @@ BUILTIN_TOOLS = [
     list_scheduled_tasks,
     delete_scheduled_task,
     modify_scheduled_task,
-    web_search
+    web_search,
+    spawn_subagent,
 ]

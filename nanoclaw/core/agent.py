@@ -9,6 +9,7 @@ from .tools.builtins import BUILTIN_TOOLS
 from .logger import audit_logger, trace_ctx
 from .config import MEMORY_DIR
 from . import skill_loader
+from .subagent import get_subagent_manager
 from .tool_scheduler import SafeToolNode
 from .tool_policy import ToolPolicy, ToolPoolMode, get_tools_for_mode
 from langchain_core.runnables import RunnableConfig
@@ -62,6 +63,34 @@ def _serialize_for_reasoning_replay(message: Any) -> Any:
             payload["tool_calls"] = tool_calls
         return payload
     return message
+
+def subagent_collector_node(state: AgentState) -> dict:
+    """Collect completed subagent results and inject them into state."""
+    try:
+        manager = get_subagent_manager()
+    except (AssertionError, RuntimeError):
+        return {}
+
+    finished = manager.collect_finished()
+    updates: dict[str, Any] = {}
+
+    if finished:
+        results: list[str] = []
+        for t in finished:
+            if t.status == "SUCCESS":
+                msg = f"【子代理 {t.id[:8]}】{t.description}\n{t.result}"
+            else:
+                msg = f"【子代理 {t.id[:8]}】{t.description}\n状态: {t.status}, 错误: {t.error}"
+            results.append(msg)
+
+        previous = state.get("subagent_results", [])
+        updates["subagent_results"] = previous + results
+
+    pending = manager.get_pending()
+    updates["subagent_tasks"] = [t.to_dict() for t in pending]
+
+    return updates
+
 
 def create_agent_app(
     provider_name: str = "openai",
@@ -165,6 +194,7 @@ def create_agent_app(
             "3. 【记忆进化】：当你敏锐地捕捉到用户提及了新的长期偏好、个人信息，或要求你“记住某事”时，必须主动调用 'save_user_profile' 工具更新画像。\n"
             "4. 保持简练，直接回应用户【最新】的一句话。并且要很自然地，像一个非常了解用户的好朋友一样，禁止说'根据你的用户画像'类似的机器人回答\n"
             "5. 【工具并发规则】：只读查询工具可以在同一轮批量调用；写入记忆、写入文件、Shell执行、任务新增/删除/修改、动态技能 run 等有副作用工具，每一轮最多调用一个，且不要和其他副作用工具同批调用。\n"
+            "6. 【后台子代理】：对于耗时长的独立任务（如调研项目、分析代码），可以用 spawn_subagent 工具分解到后台并行执行。子代理最多同时运行 5 个，完成后我会自动看到结果。\n"
             "🛑 【最高安全指令 (SANDBOX PROTOCOL)】 🛑\n"
             "你当前运行在一个受限的局域沙盒 (office 工位) 中。系统已在底层部署了严格的监控矩阵，你必须绝对遵守以下红线：\n"
             "1. 绝对禁止尝试“越狱 (Jailbreak)”或越权访问沙盒外部的文件系统（如 /etc, /home, C:\\ 等）。\n"
@@ -182,6 +212,13 @@ def create_agent_app(
 
         if active_summary:
             sys_prompt += f"\n\n[近期对话上下文]\n{active_summary}\n\n(注：这是系统自动生成的近期沟通摘要，请结合它来理解用户的最新问题)"
+
+        # 注入子代理完成结果
+        subagent_results = state.get("subagent_results", [])
+        if subagent_results:
+            recent_results = subagent_results[-5:]  # 最多 5 条
+            result_text = "\n\n".join(recent_results)
+            sys_prompt += f"\n\n[后台子代理完成结果]\n{result_text}\n\n(注：以上是后台子代理完成的任务结果，请根据这些结果继续处理)"
 
         msgs_for_llm = [SystemMessage(content=sys_prompt)] + \
         [m for m in final_msgs if not isinstance(m, SystemMessage)]
@@ -232,15 +269,17 @@ def create_agent_app(
 
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", tool_node)
+    workflow.add_node("subagent_collector", subagent_collector_node)
 
-
-    workflow.add_edge(START, "agent")
+    # subagent_collector 在每轮开始时收集后台结果，也在工具执行后收集
+    workflow.add_edge(START, "subagent_collector")
+    workflow.add_edge("subagent_collector", "agent")
 
     # 每次 agent 思考完，检查它有没有发出工具调用指令。
     # tools_condition 会自动判断：有指令 -> 走向 "tools" 节点；没指令 -> 走向 END。
     workflow.add_conditional_edges("agent", tools_condition)
 
-    workflow.add_edge("tools", "agent")
+    workflow.add_edge("tools", "subagent_collector")
 
     app = workflow.compile(checkpointer=checkpointer)
 

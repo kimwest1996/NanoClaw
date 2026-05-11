@@ -186,6 +186,8 @@ def default_policy() -> ToolPolicy:
         "schedule_task": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
         "modify_scheduled_task": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
         "delete_scheduled_task": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
+        # MEDIUM — spawns background subagents
+        "spawn_subagent": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
         # HIGH — shell execution, requires approval
         "execute_office_shell": ToolPolicyEntry(ToolRiskLevel.HIGH, needs_approval=True),
     }
