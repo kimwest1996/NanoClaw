@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .logger import audit_logger
 from .provider import get_provider
 
 
@@ -152,10 +153,15 @@ class SubagentManager:
                     msg = f"unknown tool: {tc['name']}"
                     messages.append(ToolMessage(content=msg, tool_call_id=tc["id"], name=tc["name"]))
                     continue
+                audit_logger.log_event(event="subagent_tool_call", tool=tc["name"], args=tc["args"])
                 try:
                     tool_result = await asyncio.to_thread(tool.invoke, tc["args"])
                 except Exception as exc:
                     tool_result = f"error: {exc}"
+                audit_logger.log_event(
+                    event="subagent_tool_result", tool=tc["name"],
+                    result_summary=str(tool_result)[:200],
+                )
                 messages.append(
                     ToolMessage(content=str(tool_result), tool_call_id=tc["id"], name=tc["name"])
                 )
@@ -165,28 +171,13 @@ class SubagentManager:
 
 def _build_subagent_tools():
     """Build the read-only tool set available to subagents."""
-    from langchain_core.tools import tool as create_tool
     from .tools.sandbox_tools import list_office_files, read_office_file
     from .tools.web_search import web_search
-
-    @create_tool
-    def get_current_time_sub() -> str:
-        """获取当前系统时间"""
-        from datetime import datetime
-        return f"当前时间是: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-
-    @create_tool
-    def calculator_sub(expression: str) -> str:
-        """执行数学计算"""
-        try:
-            result = eval(expression, {"__builtins__": {}}, {})
-            return f"计算结果: {result}"
-        except Exception as e:
-            return f"计算错误: {e}"
+    from .tools.builtins import calculator, get_current_time
 
     return [
-        get_current_time_sub,
-        calculator_sub,
+        get_current_time,
+        calculator,
         list_office_files,
         read_office_file,
         web_search,

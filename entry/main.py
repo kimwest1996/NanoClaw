@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from nanoclaw.core.agent import create_agent_app
+from nanoclaw.core.bootstrap import init_core
 from nanoclaw.core.config import DB_PATH
 from nanoclaw.core.mcp_manager import MCPManager
-from nanoclaw.core.subagent import configure_subagent_manager
 from nanoclaw.core.tool_policy import ToolPoolMode
 
 from entry.repl import Repl
@@ -35,8 +35,8 @@ async def async_main(mode: Optional[ToolPoolMode] = None):
         if mcp_tools:
             cprint(f"  \033[38;5;51m✦ MCP: 已加载 {len(mcp_tools)} 个外部工具\033[0m")
 
-        # ── subagent manager ───────────────────────────────────────
-        configure_subagent_manager(current_provider, current_model, asyncio.get_event_loop())
+        # ── core bootstrap ─────────────────────────────────────────
+        await init_core(current_provider, current_model, asyncio.get_event_loop())
 
         # ── initial app ────────────────────────────────────────────
         current_mode = mode or ToolPoolMode.FULL

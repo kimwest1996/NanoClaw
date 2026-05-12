@@ -1,7 +1,4 @@
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 CORE_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKAGE_DIR = os.path.dirname(CORE_DIR)
@@ -18,7 +15,14 @@ OFFICE_DIR = os.path.join(WORKSPACE_DIR, "office")         # 沙盒工位 唯一
 SKILLS_DIR = os.path.join(OFFICE_DIR, "skills")            # 技能卡槽
 TASKS_FILE = os.path.join(WORKSPACE_DIR, "tasks.json")
 
-for d in [WORKSPACE_DIR, MEMORY_DIR, PERSONAS_DIR, SCRIPTS_DIR, OFFICE_DIR, SKILLS_DIR]:
-    os.makedirs(d, exist_ok=True)
+_workspace_initialized = False
 
-print(f"🔧 [Config] Workspace 路径已就绪: {WORKSPACE_DIR}")
+
+def ensure_workspace() -> None:
+    """Create workspace directories if they don't exist. Idempotent."""
+    global _workspace_initialized
+    if _workspace_initialized:
+        return
+    for d in [WORKSPACE_DIR, MEMORY_DIR, PERSONAS_DIR, SCRIPTS_DIR, OFFICE_DIR, SKILLS_DIR]:
+        os.makedirs(d, exist_ok=True)
+    _workspace_initialized = True

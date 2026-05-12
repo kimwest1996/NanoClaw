@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -11,6 +12,7 @@ from nanoclaw.api.routers import events, health, messages, sessions, ui
 from nanoclaw.api.schemas import ErrorResponse
 from nanoclaw.core.agent import create_agent_app
 from nanoclaw.core.approval import create_api_approval_callback
+from nanoclaw.core.bootstrap import init_core
 from nanoclaw.core.config import DB_PATH, PROJECT_ROOT
 
 
@@ -24,6 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     load_dotenv(env_path, override=True)
     provider = os.getenv("DEFAULT_PROVIDER", "openai")
     model = os.getenv("DEFAULT_MODEL", "gpt-4o-mini")
+    await init_core(provider, model, asyncio.get_event_loop())
 
     try:
         async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:

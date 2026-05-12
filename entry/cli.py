@@ -1,4 +1,7 @@
 import os
+import sys
+from pathlib import Path
+
 import typer
 import questionary
 import logging
@@ -6,18 +9,19 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
 from dotenv import set_key, load_dotenv, unset_key
-import sys
+
+# ── Dev-mode bootstrap: make nanoclaw importable without pip install ──
+# Remove once `pip install -e .` is the standard approach.
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from nanoclaw.core.provider import get_provider
+from nanoclaw.core.config import ensure_workspace
 from langchain_core.messages import HumanMessage
 
 ENTRY_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(ENTRY_DIR) 
-
-os.chdir(PROJECT_ROOT)
-
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+PROJECT_ROOT = os.path.dirname(ENTRY_DIR)
 
 app = typer.Typer(help="NanoClaw - 极客专属的赛博智能终端")
 console = Console()
@@ -227,6 +231,7 @@ def run_agent(
     except ValueError:
         typer.echo(f"Unknown mode: {mode}. Use: safe / no_shell / full")
         raise typer.Exit(1)
+    ensure_workspace()
     nanoclaw_main.main(mode=pool_mode)
 
 @app.command("serve")
@@ -244,6 +249,7 @@ def serve_api(
 
     import uvicorn
 
+    ensure_workspace()
     uvicorn.run(
         "nanoclaw.api.app:create_app",
         factory=True,
@@ -265,6 +271,7 @@ def run_monitor():
 def doctor():
     """运行系统诊断，检查环境/提供商/工作空间等健康状态"""
     load_dotenv(ENV_PATH)
+    ensure_workspace()
 
     from nanoclaw.core.doctor import Doctor, CheckStatus
     from rich.console import Console
