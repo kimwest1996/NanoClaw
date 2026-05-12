@@ -187,6 +187,32 @@ class TestBuiltInTools(unittest.TestCase):
             c = f.read()
         self.assertEqual(c, "新内容")
 
+    def test_list_profile_versions_empty(self):
+        """测试列出空的历史版本"""
+        from nanoclaw.core.tools.builtins import list_profile_versions
+
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
+        result = list_profile_versions.invoke({})
+        self.assertIn("暂无历史版本快照", result)
+
+    def test_rollback_user_profile_no_version(self):
+        """测试回滚到不存在的版本"""
+        from nanoclaw.core.tools.builtins import rollback_user_profile
+
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
+        result = rollback_user_profile.invoke({"version_id": "nonexistent"})
+        self.assertIn("未找到版本", result)
+
     def test_web_search_missing_api_key(self):
         """测试 web search 未配置 API key"""
         with patch.dict(os.environ, {}, clear=True):

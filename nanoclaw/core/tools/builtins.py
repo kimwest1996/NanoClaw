@@ -322,12 +322,45 @@ def spawn_subagent(description: str, timeout: int = 120) -> str:
     )
 
 
+@nanoclaw_tool
+def list_profile_versions() -> str:
+    """
+    列出当前用户长期记忆档案的所有历史版本快照。
+    当用户问"有哪些历史版本"、"能回滚到哪个版本"时调用此工具。
+    """
+    mgr = _get_profile_manager()
+    versions = mgr.list_history_versions()
+    if not versions:
+        return "暂无历史版本快照。"
+    lines = ["  历史版本列表（从新到旧）："]
+    for v in versions:
+        lines.append(f"- 版本 {v['version_id']} | {v['size']} 字节 | {v['mtime']}")
+    return "\n".join(lines)
+
+
+@nanoclaw_tool
+def rollback_user_profile(version_id: str) -> str:
+    """
+    将用户长期记忆档案回滚到指定的历史版本。
+
+    请先调用 list_profile_versions 列出可用版本及其 version_id。
+    回滚操作会覆盖当前档案，不可撤销。建议先调用 save_user_profile 备份当前状态。
+
+    Args:
+        version_id: 版本标识（YYYYMMDD_HHMMSS_ffffff 格式），由 list_profile_versions 返回
+    """
+    mgr = _get_profile_manager()
+    return mgr.rollback(version_id)
+
+
 BUILTIN_TOOLS = [
     get_current_time,
     calculator,
     save_user_profile,
     read_user_profile,
     update_user_profile,
+    list_profile_versions,
+    rollback_user_profile,
     list_office_files,
     read_office_file,
     write_office_file,

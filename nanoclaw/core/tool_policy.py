@@ -141,6 +141,7 @@ _READ_ONLY_TOOL_NAMES = {
     "list_scheduled_tasks",
     "web_search",
     "read_user_profile",
+    "list_profile_versions",
 }
 
 # Shell tool — excluded in no_shell mode
@@ -183,9 +184,11 @@ def default_policy() -> ToolPolicy:
         "web_search": ToolPolicyEntry(ToolRiskLevel.LOW),
         # LOW — read-only memory
         "read_user_profile": ToolPolicyEntry(ToolRiskLevel.LOW),
+        "list_profile_versions": ToolPolicyEntry(ToolRiskLevel.LOW),
         # MEDIUM — side effects within sandbox
         "save_user_profile": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
         "update_user_profile": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
+        "rollback_user_profile": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
         "write_office_file": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
         "schedule_task": ToolPolicyEntry(ToolRiskLevel.MEDIUM),
         "modify_scheduled_task": ToolPolicyEntry(ToolRiskLevel.MEDIUM),

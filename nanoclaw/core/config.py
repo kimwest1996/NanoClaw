@@ -20,6 +20,15 @@ SESSIONS_DIR = os.path.join(MEMORY_DIR, "sessions")
 SESSION_MAX_FILES = 100       # 最多保留的 session 文件数
 SESSION_INJECT_LIMIT = 5      # 注入系统提示的最近 session 数
 
+# Phase 3 — deterministic maintenance
+ARCHIVE_DIR = os.path.join(MEMORY_DIR, "archive")     # 冷区归档
+HISTORY_DIR = os.path.join(MEMORY_DIR, "history")     # 版本快照
+HEAT_SCORES_FILE = os.path.join(MEMORY_DIR, "heat_scores.json")
+
+HEAT_DECAY_DAYS = 30           # 热度衰减半衰期（天）
+HEAT_ARCHIVE_THRESHOLD = 0.1   # 低于此值归档
+HISTORY_MAX_VERSIONS = 10      # 最多保留的快照数
+
 _workspace_initialized = False
 
 
@@ -28,6 +37,6 @@ def ensure_workspace() -> None:
     global _workspace_initialized
     if _workspace_initialized:
         return
-    for d in [WORKSPACE_DIR, MEMORY_DIR, PERSONAS_DIR, SCRIPTS_DIR, OFFICE_DIR, SKILLS_DIR, SESSIONS_DIR]:
+    for d in [WORKSPACE_DIR, MEMORY_DIR, PERSONAS_DIR, SCRIPTS_DIR, OFFICE_DIR, SKILLS_DIR, SESSIONS_DIR, ARCHIVE_DIR, HISTORY_DIR]:
         os.makedirs(d, exist_ok=True)
     _workspace_initialized = True

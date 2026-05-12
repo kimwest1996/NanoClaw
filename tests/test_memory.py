@@ -6,6 +6,7 @@ import os
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 
 
 class TestProfileManager(unittest.TestCase):
@@ -87,6 +88,115 @@ class TestProfileManager(unittest.TestCase):
         self.mgr.save("")
         result = self.mgr.read()
         self.assertEqual(result, "暂无记录")
+
+    # ── Phase 3: Snapshot ───────────────────────────────────────
+
+    def test_snapshot_created_on_save(self):
+        """验证 save 时自动创建快照"""
+        self.mgr.save("# 个人基本信息\n- 姓名：张三")
+        self.mgr.save("# 沟通偏好\n- 语言：中文")
+        versions = self.mgr.list_history_versions()
+        self.assertGreaterEqual(len(versions), 1)
+
+    def test_snapshot_created_on_update_section(self):
+        """验证 update_section 时自动创建快照"""
+        self.mgr.save("# 个人基本信息\n- 姓名：张三")
+        self.mgr.update_section("沟通偏好", "- 语言：中文")
+        versions = self.mgr.list_history_versions()
+        self.assertGreaterEqual(len(versions), 1)
+
+    def test_snapshot_prune_max_10(self):
+        """验证快照裁剪到最多 10 份"""
+        for i in range(15):
+            self.mgr.save(f"# 个人基本信息\n- 姓名：第{i}号")
+        versions = self.mgr.list_history_versions()
+        self.assertLessEqual(len(versions), 10)
+
+    # ── Phase 3: Heat scoring ────────────────────────────────────
+
+    def test_heat_score_increments_on_save(self):
+        """验证 save 带标题时更新热度"""
+        self.mgr.save("# 沟通偏好\n- 语言：中文")
+        scores = self.mgr._load_heat_scores()
+        self.assertIn("沟通偏好", scores)
+        self.assertEqual(scores["沟通偏好"]["count"], 1)
+
+    def test_heat_score_increments_on_update(self):
+        """验证 update_section 增加热度计数"""
+        self.mgr.save("# 个人基本信息\n- 姓名：张三")
+        self.mgr.update_section("沟通偏好", "- 语言：中文")
+        scores = self.mgr._load_heat_scores()
+        self.assertEqual(scores["沟通偏好"]["count"], 1)
+
+    def test_heat_score_decay(self):
+        """验证热度随天数衰减"""
+        scores = {"测试章节": {"count": 10, "last_updated": (datetime.now() - timedelta(days=60)).isoformat(), "score": 0.0}}
+        self.mgr._save_heat_scores(scores)
+        self.mgr._decay_scores()
+        reloaded = self.mgr._load_heat_scores()
+        # 60 days ~ exp(-2) ≈ 0.135, count=10 → score ≈ 1.35
+        self.assertLess(reloaded["测试章节"]["score"], 10.0)
+        self.assertGreater(reloaded["测试章节"]["score"], 0.0)
+
+    # ── Phase 3: Cold archive ────────────────────────────────────
+
+    def test_archive_cold_sections(self):
+        """验证冷区章节被归档"""
+        # 直接写 profile 文件，绕过 save() 的热度追踪
+        os.makedirs(self.mgr.memory_dir, exist_ok=True)
+        with open(self.mgr.profile_path, "w", encoding="utf-8") as f:
+            f.write("# 个人基本信息\n- 姓名：张三\n\n# 冷区\n- 数据：旧数据")
+        # 覆盖热度数据（冷区极低分）
+        scores = {"冷区": {"count": 1, "last_updated": "2000-01-01T00:00:00", "score": 0.01}}
+        self.mgr._save_heat_scores(scores)
+
+        archived = self.mgr.archive_cold_sections()
+        self.assertEqual(archived, 1)
+
+        # 验证占位符
+        result = self.mgr.read()
+        self.assertIn("archived:", result)
+
+    def test_no_cold_sections_returns_zero(self):
+        """验证没有冷区时返回 0"""
+        self.mgr.save("# 个人基本信息\n- 姓名：张三")
+        archived = self.mgr.archive_cold_sections()
+        self.assertEqual(archived, 0)
+
+    # ── Phase 3: Rollback ────────────────────────────────────────
+
+    def test_rollback_restores_content(self):
+        """验证 rollback 恢复历史内容"""
+        self.mgr.save("# 个人基本信息\n- 姓名：张三")
+        self.mgr.save("# 个人基本信息\n- 姓名：李四")
+        versions = self.mgr.list_history_versions()
+        self.assertGreaterEqual(len(versions), 1)
+
+        # Rollback to first version (oldest)
+        oldest = versions[-1]
+        result = self.mgr.rollback(oldest["version_id"])
+        self.assertIn("已从版本", result)
+
+        with open(self.mgr.profile_path, encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("张三", content)
+
+    def test_rollback_invalid_version(self):
+        """验证回滚到不存在的版本"""
+        result = self.mgr.rollback("nonexistent")
+        self.assertIn("未找到版本", result)
+
+    # ── Phase 3: Conflict detection ──────────────────────────────
+
+    def test_conflict_archive_on_update(self):
+        """验证 update_section 检测到冲突时归档旧值"""
+        self.mgr.save("# 沟通偏好\n- 语言：中文\n- 风格：简洁")
+        self.mgr.update_section("沟通偏好", "- 语言：英文\n- 风格：简洁")
+
+        # 验证 archive 目录有冲突文件
+        archive_files = os.listdir(self.mgr.archive_dir)
+        conflict_files = [f for f in archive_files if f.startswith("conflict_")]
+        self.assertGreaterEqual(len(conflict_files), 1)
 
 
 class TestSessionMemoryStore(unittest.TestCase):

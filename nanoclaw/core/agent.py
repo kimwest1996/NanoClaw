@@ -8,7 +8,7 @@ from . import provider as provider_module
 from .tools.builtins import BUILTIN_TOOLS
 from .logger import audit_logger, trace_ctx
 from .config import MEMORY_DIR, SESSIONS_DIR, SESSION_INJECT_LIMIT
-from .memory import SessionMemoryStore
+from .memory import SessionMemoryStore, ProfileManager
 from . import skill_loader
 from .subagent import get_subagent_manager
 from .tool_scheduler import SafeToolNode
@@ -187,6 +187,20 @@ def create_agent_app(
                 )
             except Exception:
                 pass  # session 存储失败不阻塞主流程
+
+            # 每 10 回合自动维护：decay scores + archive cold sections
+            turn_count = state.get("session_turn_count", 0) + 1
+            if turn_count > 0 and turn_count % 10 == 0:
+                try:
+                    pm = ProfileManager(MEMORY_DIR)
+                    pm._decay_scores()
+                    archived = pm.archive_cold_sections()
+                    if archived:
+                        print_formatted_text(ANSI(
+                            f"\033[K \033[38;5;240m ● 记忆维护：归档了 {archived} 个冷区章节\033[0m"
+                        ))
+                except Exception:
+                    pass  # 维护失败不阻塞主流程
 
             # 从状态机中删除信息
             delete_cmds = [RemoveMessage(id=m.id) for m in discarded_msgs if m.id]
