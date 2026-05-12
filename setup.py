@@ -13,7 +13,6 @@ setup(
     name="nanoclaw",
     version="1.0.0",
     packages=find_packages(),
-    py_modules=["cli"], 
     install_requires=parse_requirements('requirements.txt'),
     entry_points={
         "console_scripts": [
