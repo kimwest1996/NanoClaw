@@ -27,3 +27,7 @@ workspace/memory/*.md
 workspace/office
 
 *.egg-info/
+
+# Local-only artifacts (blocked by server hook)
+docs/
+evals/
