@@ -7,7 +7,8 @@ from .context import AgentState, trim_context_messages
 from . import provider as provider_module
 from .tools.builtins import BUILTIN_TOOLS
 from .logger import audit_logger, trace_ctx
-from .config import MEMORY_DIR
+from .config import MEMORY_DIR, SESSIONS_DIR, SESSION_INJECT_LIMIT
+from .memory import SessionMemoryStore
 from . import skill_loader
 from .subagent import get_subagent_manager
 from .tool_scheduler import SafeToolNode
@@ -171,6 +172,22 @@ def create_agent_app(
             # 更新摘要
             state_updates["summary"] = active_summary
 
+            # 更新会话追踪
+            state_updates["session_turn_count"] = state.get("session_turn_count", 0) + 1
+            if not state.get("session_id"):
+                state_updates["session_id"] = thread_id
+
+            # 存储 session 摘要（mid-term memory）
+            try:
+                session_store = SessionMemoryStore(SESSIONS_DIR)
+                session_store.store_session(
+                    thread_id=thread_id,
+                    summary=active_summary,
+                    turn_count=state.get("session_turn_count", 0) + 1,
+                )
+            except Exception:
+                pass  # session 存储失败不阻塞主流程
+
             # 从状态机中删除信息
             delete_cmds = [RemoveMessage(id=m.id) for m in discarded_msgs if m.id]
             state_updates["messages"] = delete_cmds
@@ -186,12 +203,24 @@ def create_agent_app(
                 if content:
                     profile_content = content
 
+        # 加载近期 session 摘要（mid-term memory）
+        recent_session_summaries: list[str] = []
+        try:
+            session_store = SessionMemoryStore(SESSIONS_DIR)
+            recent_sessions = session_store.get_recent_sessions(thread_id)
+            for s in recent_sessions:
+                summary = s.get("summary", "")
+                if summary.strip():
+                    recent_session_summaries.append(summary)
+        except Exception:
+            pass
+
         sys_prompt = (
             "你是 NanoClaw，一个聪明、高效、说话自然的 AI 助手。\n\n"
             "【对话核心原则】\n"
             "1. 像人类一样自然对话。\n"
             "2. 【双脑协同】：在回答时，你必须综合考量下方的【用户长期画像】（对方的习惯与底线）与【近期对话上下文】（目前的任务进度）。\n"
-            "3. 【记忆进化】：当你敏锐地捕捉到用户提及了新的长期偏好、个人信息，或要求你“记住某事”时，必须主动调用 'save_user_profile' 工具更新画像。\n"
+            "3. 【记忆进化】：当你敏锐地捕捉到用户提及了新的长期偏好、个人信息，或要求你“记住某事”时，必须主动调用 'save_user_profile' 或 'update_user_profile' 工具更新画像。如需查看当前已有记录，请调用 'read_user_profile'。\n"
             "4. 保持简练，直接回应用户【最新】的一句话。并且要很自然地，像一个非常了解用户的好朋友一样，禁止说'根据你的用户画像'类似的机器人回答\n"
             "5. 【工具并发规则】：只读查询工具可以在同一轮批量调用；写入记忆、写入文件、Shell执行、任务新增/删除/修改、动态技能 run 等有副作用工具，每一轮最多调用一个，且不要和其他副作用工具同批调用。\n"
             "6. 【后台子代理】：对于耗时长的独立任务（如调研项目、分析代码），可以用 spawn_subagent 工具分解到后台并行执行。子代理最多同时运行 5 个，完成后我会自动看到结果。\n"
@@ -212,6 +241,10 @@ def create_agent_app(
 
         if active_summary:
             sys_prompt += f"\n\n[近期对话上下文]\n{active_summary}\n\n(注：这是系统自动生成的近期沟通摘要，请结合它来理解用户的最新问题)"
+
+        if recent_session_summaries:
+            session_block = "\n\n".join([f"【会话 {i+1}】\n{s}" for i, s in enumerate(recent_session_summaries)])
+            sys_prompt += f"\n\n[历史会话摘要]\n{session_block}\n\n(注：这些是较早之前的对话摘要，帮助你回顾已完结的对话上下文)"
 
         # 注入子代理完成结果
         subagent_results = state.get("subagent_results", [])

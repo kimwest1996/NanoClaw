@@ -67,9 +67,9 @@ NanoClaw currently provides:
 - **two-phase skill execution**
   - `help` before `run`
   - dynamic skills loaded from `workspace/office/skills`
-- **sandboxed engineering tools**
-  - file read/write inside a restricted workspace
-  - shell execution with path and command guardrails
+- **restricted workspace tools**
+  - file read/write inside a bounded workspace directory
+  - approval-gated shell execution with path and command guardrails
 - **centralized tool governance**
   - risk-based tool policy
   - human approval for high-risk tools

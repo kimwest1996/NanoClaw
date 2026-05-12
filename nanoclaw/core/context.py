@@ -13,6 +13,10 @@ class AgentState(TypedDict):
     subagent_tasks: list[dict]       # 当前运行中的子代理列表
     subagent_results: list[str]      # 已完成子代理的结果
 
+    # 会话追踪（mid-term memory）
+    session_id: str                  # 当前会话标识
+    session_turn_count: int          # 当前会话中的回合计数
+
 def trim_context_messages(messages: list[BaseMessage], trigger_turns: int = 8, keep_turns: int = 4) -> tuple[list[BaseMessage], list[BaseMessage]]:
     # 按照完整用户回合来裁剪上下文：即 一个会从从HumanMessage开始，直到下一个HumanMessage结束，会把AIMessage、tool_calls、ToolMessage一并保留
     first_system = next((m for m in messages if isinstance(m, SystemMessage)), None)

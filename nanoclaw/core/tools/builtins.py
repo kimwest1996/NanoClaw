@@ -12,10 +12,19 @@ from .sandbox_tools import (
     execute_office_shell
 )
 from .web_search import web_search
+from ..memory import ProfileManager
 
 
 tasks_lock = threading.Lock()
-PROFILE_PATH = os.path.join(MEMORY_DIR, "user_profile.md")
+
+_profile_manager = None
+
+
+def _get_profile_manager():
+    global _profile_manager
+    if _profile_manager is None:
+        _profile_manager = ProfileManager(MEMORY_DIR)
+    return _profile_manager
 
 
 @nanoclaw_tool
@@ -43,11 +52,38 @@ def save_user_profile(new_content: str) -> str:
     3.将修改后的一整篇完整 Markdown 文本作为 new_content 参数传入此工具。
     注意：此操作将完全覆盖旧文件！请确保传入的是完整的最新档案。
     """
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    with open(PROFILE_PATH, "w", encoding="utf-8") as f:
-        f.write(new_content)
+    return _get_profile_manager().save(new_content)
 
-    return "记忆档案已成功覆写更新。新的人设画像已生效。"
+
+@nanoclaw_tool
+def read_user_profile(section: str = "") -> str:
+    """
+    读取用户的长期记忆档案。
+
+    在调用 save_user_profile 或 update_user_profile 工具更新记忆之前，
+    建议先调用此工具获取当前已有记录，避免重复记录或冲突。
+
+    Args:
+        section: 可选，指定要读取的章节名称。留空则返回完整档案。
+    """
+    return _get_profile_manager().read(section)
+
+
+@nanoclaw_tool
+def update_user_profile(section: str, content: str) -> str:
+    """
+    增量更新用户长期记忆档案中的特定章节，不影响其他章节。
+
+    当你发现用户的偏好发生改变，且只需要更新某个特定方面时，
+    使用此工具替代 save_user_profile（后者会处理整个档案）。
+
+    Args:
+        section: 章节名称
+        content: 该章节的新内容（Markdown 格式，不要包含章节标题）。
+                 例如: "- 语言：中文\\n- 风格：简洁直接"
+    """
+    return _get_profile_manager().update_section(section, content)
+
 
 
 @nanoclaw_tool
@@ -290,6 +326,8 @@ BUILTIN_TOOLS = [
     get_current_time,
     calculator,
     save_user_profile,
+    read_user_profile,
+    update_user_profile,
     list_office_files,
     read_office_file,
     write_office_file,

@@ -15,6 +15,11 @@ OFFICE_DIR = os.path.join(WORKSPACE_DIR, "office")         # 沙盒工位 唯一
 SKILLS_DIR = os.path.join(OFFICE_DIR, "skills")            # 技能卡槽
 TASKS_FILE = os.path.join(WORKSPACE_DIR, "tasks.json")
 
+# Mid-term session memory
+SESSIONS_DIR = os.path.join(MEMORY_DIR, "sessions")
+SESSION_MAX_FILES = 100       # 最多保留的 session 文件数
+SESSION_INJECT_LIMIT = 5      # 注入系统提示的最近 session 数
+
 _workspace_initialized = False
 
 
@@ -23,6 +28,6 @@ def ensure_workspace() -> None:
     global _workspace_initialized
     if _workspace_initialized:
         return
-    for d in [WORKSPACE_DIR, MEMORY_DIR, PERSONAS_DIR, SCRIPTS_DIR, OFFICE_DIR, SKILLS_DIR]:
+    for d in [WORKSPACE_DIR, MEMORY_DIR, PERSONAS_DIR, SCRIPTS_DIR, OFFICE_DIR, SKILLS_DIR, SESSIONS_DIR]:
         os.makedirs(d, exist_ok=True)
     _workspace_initialized = True

@@ -62,25 +62,130 @@ class TestBuiltInTools(unittest.TestCase):
                 result = calculator.invoke({"expression": expr})
                 self.assertIn("计算出错", result)
 
-    @patch('nanoclaw.core.tools.builtins.MEMORY_DIR', new_callable=lambda: tempfile.mkdtemp())
-    @patch('nanoclaw.core.tools.builtins.PROFILE_PATH', new_callable=lambda: tempfile.mktemp())
-    def test_save_user_profile(self, mock_profile_path, mock_memory_dir):
+    def _set_profile_manager(self, tmpdir):
+        """Replace the module-level profile manager with one pointing to tmpdir."""
+        import nanoclaw.core.tools.builtins
+        from nanoclaw.core.memory import ProfileManager
+        nanoclaw.core.tools.builtins._profile_manager = ProfileManager(tmpdir)
+
+    def test_save_user_profile(self):
         """测试保存用户档案功能"""
         from nanoclaw.core.tools.builtins import save_user_profile
 
         import tempfile
         import os
 
-        # 测试保存功能
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
         test_content = "# 用户档案\n- 姓名：张三\n- 职业：工程师"
         result = save_user_profile.invoke({"new_content": test_content})
         self.assertEqual(result, "记忆档案已成功覆写更新。新的人设画像已生效。")
 
-        # 验证文件已创建并包含正确内容
-        self.assertTrue(os.path.exists(mock_profile_path))
-        with open(mock_profile_path, 'r', encoding='utf-8') as f:
+        profile_path = os.path.join(tmpdir, "user_profile.md")
+        self.assertTrue(os.path.exists(profile_path))
+        with open(profile_path, 'r', encoding='utf-8') as f:
             saved_content = f.read()
         self.assertEqual(saved_content, test_content)
+
+    def test_read_user_profile_no_file(self):
+        """测试读取不存在的档案"""
+        from nanoclaw.core.tools.builtins import read_user_profile
+
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
+        result = read_user_profile.invoke({})
+        self.assertIn("暂无记录", result)
+
+    def test_read_user_profile_with_content(self):
+        """测试读取已有档案"""
+        from nanoclaw.core.tools.builtins import read_user_profile
+
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
+        profile_path = os.path.join(tmpdir, "user_profile.md")
+        with open(profile_path, 'w', encoding='utf-8') as f:
+            f.write("# 沟通偏好\n- 语言：中文\n- 风格：简洁")
+        result = read_user_profile.invoke({})
+        self.assertIn("沟通偏好", result)
+        self.assertIn("中文", result)
+
+    def test_update_user_profile_add_section(self):
+        """测试增量更新新增章节"""
+        from nanoclaw.core.tools.builtins import update_user_profile
+
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
+        profile_path = os.path.join(tmpdir, "user_profile.md")
+        with open(profile_path, 'w', encoding='utf-8') as f:
+            f.write("# 个人基本信息\n- 姓名：张三")
+
+        result = update_user_profile.invoke({
+            "section": "沟通偏好",
+            "content": "- 语言：中文\n- 风格：简洁"
+        })
+        self.assertIn("沟通偏好", result)
+
+        with open(profile_path, 'r', encoding='utf-8') as f:
+            c = f.read()
+        self.assertIn("个人基本信息", c)
+        self.assertIn("沟通偏好", c)
+        self.assertIn("张三", c)
+        self.assertIn("中文", c)
+
+    def test_save_user_profile_merge_with_headers(self):
+        """测试 save_user_profile 带分区标题时合并而非覆写"""
+        from nanoclaw.core.tools.builtins import save_user_profile
+
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
+        profile_path = os.path.join(tmpdir, "user_profile.md")
+        with open(profile_path, 'w', encoding='utf-8') as f:
+            f.write("# 个人基本信息\n- 姓名：张三\n\n# 沟通偏好\n- 语言：中文")
+
+        save_user_profile.invoke({"new_content": "# 沟通偏好\n- 语言：英文\n- 风格：简洁"})
+
+        with open(profile_path, 'r', encoding='utf-8') as f:
+            c = f.read()
+        self.assertIn("个人基本信息", c)
+        self.assertIn("张三", c)
+        self.assertIn("语言：英文", c)
+
+    def test_save_user_profile_full_overwrite_without_headers(self):
+        """测试 save_user_profile 不带标题时保持完整覆写（兼容旧行为）"""
+        from nanoclaw.core.tools.builtins import save_user_profile
+
+        import tempfile
+        import os
+
+        tmpdir = tempfile.mkdtemp()
+        self._set_profile_manager(tmpdir)
+
+        profile_path = os.path.join(tmpdir, "user_profile.md")
+        with open(profile_path, 'w', encoding='utf-8') as f:
+            f.write("旧内容")
+
+        save_user_profile.invoke({"new_content": "新内容"})
+
+        with open(profile_path, 'r', encoding='utf-8') as f:
+            c = f.read()
+        self.assertEqual(c, "新内容")
 
     def test_web_search_missing_api_key(self):
         """测试 web search 未配置 API key"""

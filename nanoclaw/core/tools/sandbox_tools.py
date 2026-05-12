@@ -1,5 +1,6 @@
 import os
 import subprocess
+from pathlib import Path
 from .base import nanoclaw_tool
 from ..config import OFFICE_DIR
 import re
@@ -7,21 +8,24 @@ import platform
 
 SYS_OS = platform.system()
 
+
 def _get_safe_path(relative_path: str) -> str:
+    """Resolve a path relative to OFFICE_DIR and verify it stays within bounds.
+
+    Uses canonical path comparison (Path.resolve + relative_to) instead of
+    string prefix matching, which is vulnerable to prefix-bypass attacks
+    (e.g. ``office_evil`` sharing the same string prefix as ``office``).
     """
-    将模型传入的相对路径转换为绝对路径，并死死检查它是否越界！
-    如果模型尝试传入 "../../etc/passwd"，这里会直接把它拦截。
-    """
-    # 将 OFFICE_DIR 转化为标准绝对路径
-    base_dir = os.path.abspath(OFFICE_DIR)
-    # 将目标路径转化为绝对路径
-    target_path = os.path.abspath(os.path.join(base_dir, relative_path))
-    
-    # 核心防御：目标路径必须以 OFFICE_DIR 开头！
-    if not target_path.startswith(base_dir):
-        raise PermissionError(f"越权拦截：你试图访问沙盒外的路径 '{relative_path}'！你只能在 office 工位内活动。")
-    
-    return target_path
+    base = Path(OFFICE_DIR).resolve()
+    target = (base / relative_path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise PermissionError(
+            f"越权拦截：你试图访问沙盒外的路径 '{relative_path}'！"
+            "你只能在 office 工位内活动。"
+        )
+    return str(target)
 
 @nanoclaw_tool
 def list_office_files(sub_dir: str = "") -> str:
