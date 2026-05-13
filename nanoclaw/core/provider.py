@@ -1,11 +1,53 @@
 import os
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage
 from dotenv import load_dotenv
 '''
 多模型适配(Factory)
 '''
 load_dotenv()
+
+# Patch langchain_openai to preserve reasoning_content in AIMessage.additional_kwargs.
+# Without this, reasoning-mode models (mimo, deepseek with thinking) break on
+# multi-turn tool calls because the API requires reasoning_content to be passed back.
+_LC_PATCHED = False
+
+
+def _apply_reasoning_content_patch() -> None:
+    global _LC_PATCHED
+    if _LC_PATCHED:
+        return
+    try:
+        import langchain_openai.chat_models.base as lc_base
+
+        # Patch 1 — inbound: preserve reasoning_content from API response → AIMessage
+        _original_dict_to_msg = lc_base._convert_dict_to_message
+
+        def _patched_dict_to_msg(_dict: Mapping[str, Any]) -> Any:
+            message = _original_dict_to_msg(_dict)
+            reasoning = _dict.get("reasoning_content")
+            if reasoning and isinstance(message, AIMessage):
+                message.additional_kwargs["reasoning_content"] = reasoning
+            return message
+
+        lc_base._convert_dict_to_message = _patched_dict_to_msg
+
+        # Patch 2 — outbound: include reasoning_content when serializing AIMessage → API dict
+        _original_msg_to_dict = lc_base._convert_message_to_dict
+
+        def _patched_msg_to_dict(message: Any, **kw: Any) -> dict:
+            result = _original_msg_to_dict(message, **kw)
+            if isinstance(message, AIMessage):
+                reasoning = message.additional_kwargs.get("reasoning_content")
+                if reasoning:
+                    result["reasoning_content"] = reasoning
+            return result
+
+        lc_base._convert_message_to_dict = _patched_msg_to_dict
+        _LC_PATCHED = True
+    except Exception:
+        pass
 
 # 各大厂商官方的 OpenAI 兼容接口地址 (当用户未配置 BASE_URL 时作为兜底)
 COMPATIBLE_BASE_URLS = {
@@ -25,8 +67,8 @@ def _xiaomi_defaults(model_name: str) -> dict[str, float]:
 
 
 def get_provider(
-    provider_name: str = "openai", 
-    model_name: str = "gpt-4o-mini", 
+    provider_name: str = "openai",
+    model_name: str = "gpt-4o-mini",
     temperature: float = 0.0,
     base_url: Optional[str] = None,  # 允许外部传入
     api_key: Optional[str] = None,   # 允许外部传入
@@ -35,6 +77,7 @@ def get_provider(
     """
     模型适配器工厂
     """
+    _apply_reasoning_content_patch()
     provider_name = provider_name.lower()
     
     if provider_name in ["openai", "aliyun", "dashscope", "z.ai", "tencent", "deepseek", "xiaomi", "other"]:
