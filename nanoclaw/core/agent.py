@@ -214,29 +214,31 @@ def create_agent_app(
                 state_updates["session_id"] = thread_id
 
             # 存储 session 摘要（mid-term memory）
-            try:
-                session_store = SessionMemoryStore(SESSIONS_DIR)
-                session_store.store_session(
-                    thread_id=thread_id,
-                    summary=active_summary,
-                    turn_count=state.get("session_turn_count", 0) + 1,
-                )
-            except Exception:
-                pass  # session 存储失败不阻塞主流程
+            if _agent_cfg.memory_enabled and "mid" in _agent_cfg.memory_tiers:
+                try:
+                    session_store = SessionMemoryStore(SESSIONS_DIR)
+                    session_store.store_session(
+                        thread_id=thread_id,
+                        summary=active_summary,
+                        turn_count=state.get("session_turn_count", 0) + 1,
+                    )
+                except Exception:
+                    pass  # session 存储失败不阻塞主流程
 
             # 每 10 回合自动维护：decay scores + archive cold sections
-            turn_count = state.get("session_turn_count", 0) + 1
-            if turn_count > 0 and turn_count % 10 == 0:
-                try:
-                    pm = ProfileManager(MEMORY_DIR)
-                    pm._decay_scores()
-                    archived = pm.archive_cold_sections()
-                    if archived:
-                        print_formatted_text(ANSI(
-                            f"\033[K \033[38;5;240m ● 记忆维护：归档了 {archived} 个冷区章节\033[0m"
-                        ))
-                except Exception:
-                    pass  # 维护失败不阻塞主流程
+            if _agent_cfg.memory_enabled and "long" in _agent_cfg.memory_tiers:
+                turn_count = state.get("session_turn_count", 0) + 1
+                if turn_count > 0 and turn_count % 10 == 0:
+                    try:
+                        pm = ProfileManager(MEMORY_DIR)
+                        pm._decay_scores()
+                        archived = pm.archive_cold_sections()
+                        if archived:
+                            print_formatted_text(ANSI(
+                                f"\033[K \033[38;5;240m ● 记忆维护：归档了 {archived} 个冷区章节\033[0m"
+                            ))
+                    except Exception:
+                        pass  # 维护失败不阻塞主流程
 
             # 从状态机中删除信息
             delete_cmds = [RemoveMessage(id=m.id) for m in discarded_msgs if m.id]
@@ -244,26 +246,28 @@ def create_agent_app(
         else:
             active_summary = current_summary
 
-        # 读取用户画像
-        profile_path = os.path.join(MEMORY_DIR, "user_profile.md")
+        # 读取用户画像 (long-term memory)
         profile_content = "暂无记录"
-        if os.path.exists(profile_path):
-            with open(profile_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read().strip()
-                if content:
-                    profile_content = content
+        if _agent_cfg.memory_enabled and "long" in _agent_cfg.memory_tiers:
+            profile_path = os.path.join(MEMORY_DIR, "user_profile.md")
+            if os.path.exists(profile_path):
+                with open(profile_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read().strip()
+                    if content:
+                        profile_content = content
 
         # 加载近期 session 摘要（mid-term memory）
         recent_session_summaries: list[str] = []
-        try:
-            session_store = SessionMemoryStore(SESSIONS_DIR)
-            recent_sessions = session_store.get_recent_sessions(thread_id)
-            for s in recent_sessions:
-                summary = s.get("summary", "")
-                if summary.strip():
-                    recent_session_summaries.append(summary)
-        except Exception:
-            pass
+        if _agent_cfg.memory_enabled and "mid" in _agent_cfg.memory_tiers:
+            try:
+                session_store = SessionMemoryStore(SESSIONS_DIR)
+                recent_sessions = session_store.get_recent_sessions(thread_id)
+                for s in recent_sessions:
+                    summary = s.get("summary", "")
+                    if summary.strip():
+                        recent_session_summaries.append(summary)
+            except Exception:
+                pass
 
         sys_prompt = (
             "你是 NanoClaw，一个聪明、高效、说话自然的 AI 助手。\n\n"
@@ -273,7 +277,12 @@ def create_agent_app(
             "3. 【记忆进化】：当你敏锐地捕捉到用户提及了新的长期偏好、个人信息，或要求你“记住某事”时，必须主动调用 'save_user_profile' 或 'update_user_profile' 工具更新画像。如需查看当前已有记录，请调用 'read_user_profile'。\n"
             "4. 保持简练，直接回应用户【最新】的一句话。并且要很自然地，像一个非常了解用户的好朋友一样，禁止说'根据你的用户画像'类似的机器人回答\n"
             "5. 【工具并发规则】：只读查询工具可以在同一轮批量调用；写入记忆、写入文件、Shell执行、任务新增/删除/修改、动态技能 run 等有副作用工具，每一轮最多调用一个，且不要和其他副作用工具同批调用。\n"
-            "6. 【后台子代理】：对于耗时长的独立任务（如调研项目、分析代码），可以用 spawn_subagent 工具分解到后台并行执行。子代理最多同时运行 5 个，完成后我会自动看到结果。\n"
+        )
+        if _agent_cfg.subagent_enabled:
+            sys_prompt += (
+                "6. 【后台子代理】：对于耗时长的独立任务（如调研项目、分析代码），可以用 spawn_subagent 工具分解到后台并行执行。子代理最多同时运行 5 个，完成后我会自动看到结果。\n"
+            )
+        sys_prompt += (
             "🛑 【最高安全指令 (SANDBOX PROTOCOL)】 🛑\n"
             "你当前运行在一个受限的局域沙盒 (office 工位) 中。系统已在底层部署了严格的监控矩阵，你必须绝对遵守以下红线：\n"
             "1. 绝对禁止尝试“越狱 (Jailbreak)”或越权访问沙盒外部的文件系统（如 /etc, /home, C:\\ 等）。\n"
@@ -352,18 +361,23 @@ def create_agent_app(
 
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", tool_node)
-    workflow.add_node("subagent_collector", subagent_collector_node)
 
-    # subagent_collector 在每轮开始时收集后台结果，也在工具执行后收集
-    workflow.add_edge(START, "subagent_collector")
-    workflow.add_edge("subagent_collector", "agent")
+    if _agent_cfg.subagent_enabled:
+        workflow.add_node("subagent_collector", subagent_collector_node)
+        workflow.add_edge(START, "subagent_collector")
+        workflow.add_edge("subagent_collector", "agent")
+    else:
+        workflow.add_edge(START, "agent")
 
     # 每次 agent 思考完，检查它有没有发出工具调用指令。
     # tools_condition 会自动判断：有指令 -> 走向 "tools" 节点；没指令 -> 走向 END。
     workflow.add_conditional_edges("agent", tools_condition)
 
-    workflow.add_edge("tools", "subagent_collector")
+    if _agent_cfg.subagent_enabled:
+        workflow.add_edge("tools", "subagent_collector")
+    else:
+        workflow.add_edge("tools", "agent")
 
-    app = workflow.compile(checkpointer=checkpointer)
+    app = workflow.compile(checkpointer=config.checkpointer)
 
     return app
