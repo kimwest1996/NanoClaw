@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from typing import Any, List, Optional
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, START, END
@@ -17,6 +20,27 @@ from langchain_core.runnables import RunnableConfig
 import os
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import ANSI
+
+
+@dataclass
+class AgentConfig:
+    """Configuration for create_agent_app, supports Experiment overrides."""
+
+    provider: str = "deepseek"
+    model: str = "deepseek-v4-flash"
+    mode: ToolPoolMode | None = None
+    tools: List[BaseTool] | None = None
+    checkpointer: Any = None
+    policy: ToolPolicy | None = None
+    mcp_tools: List[BaseTool] | None = None
+
+    # Component switches — enable ablation experiments
+    memory_enabled: bool = True
+    subagent_enabled: bool = True
+    mcp_enabled: bool = True
+
+    # Memory tier control — "short" | "mid" | "long"
+    memory_tiers: tuple[str, ...] = field(default=("short", "mid", "long"))
 
 
 REASONING_PROVIDERS = {"deepseek", "xiaomi"}
@@ -94,34 +118,46 @@ def subagent_collector_node(state: AgentState) -> dict:
 
 
 def create_agent_app(
-    provider_name: str = "openai",
-    model_name: str = "gpt-4o-mini",
+    config: AgentConfig | None = None,
+    *,
+    provider_name: str = "deepseek",
+    model_name: str = "deepseek-v4-flash",
     tools: Optional[List[BaseTool]] = None,
     checkpointer = None,
     policy: Optional[ToolPolicy] = None,
     mode: Optional[ToolPoolMode] = None,
     mcp_tools: Optional[List[BaseTool]] = None,
 ):
-    # 初始化 trace session
+    if config is None:
+        config = AgentConfig(
+            provider=provider_name,
+            model=model_name,
+            mode=mode,
+            tools=tools,
+            checkpointer=checkpointer,
+            policy=policy,
+            mcp_tools=mcp_tools,
+        )
+
     session_id = trace_ctx.reset_session()
-    normalized_provider = provider_name.lower()
-    if tools is None:
+    if config.tools is None:
         dynamic_tools = skill_loader.load_dynamic_skills()
         actual_tools = BUILTIN_TOOLS + dynamic_tools
     else:
-        actual_tools = tools
+        actual_tools = list(config.tools)
 
-    if mcp_tools:
-        actual_tools = actual_tools + mcp_tools
+    if config.mcp_enabled and config.mcp_tools:
+        actual_tools = actual_tools + list(config.mcp_tools)
 
-    if mode and mode != ToolPoolMode.FULL:
-        actual_tools = get_tools_for_mode(mode, actual_tools)
-    
-    
-    tool_node = SafeToolNode(actual_tools, policy=policy)
+    if config.mode and config.mode != ToolPoolMode.FULL:
+        actual_tools = get_tools_for_mode(config.mode, actual_tools)
 
-    llm = provider_module.get_provider(provider_name=provider_name, model_name=model_name)
+    tool_node = SafeToolNode(actual_tools, policy=config.policy)
+
+    llm = provider_module.get_provider(provider_name=config.provider, model_name=config.model)
     llm_with_tools = llm.bind_tools(actual_tools)
+
+    _agent_cfg = config  # stored for closure (agent_node's `config` param shadows it)
 
     def agent_node(state: AgentState, config: RunnableConfig) -> dict:
         """
@@ -275,7 +311,7 @@ def create_agent_app(
                 m.content = m.content.encode('utf-8', 'ignore').decode('utf-8')
 
         llm_input_messages: list[Any]
-        if normalized_provider in REASONING_PROVIDERS:
+        if _agent_cfg.provider.lower() in REASONING_PROVIDERS:
             llm_input_messages = [_serialize_for_reasoning_replay(m) for m in msgs_for_llm]
         else:
             llm_input_messages = msgs_for_llm
