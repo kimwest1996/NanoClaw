@@ -280,7 +280,7 @@ def create_agent_app(
         )
         if _agent_cfg.subagent_enabled:
             sys_prompt += (
-                "6. 【后台子代理】：对于耗时长的独立任务（如调研项目、分析代码），可以用 spawn_subagent 工具分解到后台并行执行。子代理最多同时运行 5 个，完成后我会自动看到结果。\n"
+                "6. 【后台子代理】：对于耗时长的独立任务（如调研项目、分析代码），你应主动调用 spawn_subagent 工具分解到后台并行执行。子代理最多同时运行 5 个，完成后子代理的结果会自动追加到后续对话中，你在看到结果后应主动向用户报告。\n"
             )
         sys_prompt += (
             "🛑 【最高安全指令 (SANDBOX PROTOCOL)】 🛑\n"
