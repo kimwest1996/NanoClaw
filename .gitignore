@@ -29,6 +29,17 @@ workspace/office
 
 *.egg-info/
 
-# Local-only artifacts (blocked by server hook)
+# Local-only artifacts (blocked by pre-push hook)
 docs/
 evals/
+resumedocs/
+
+# Agent / IDE / project config (local only)
+.agents/
+.claude/
+.idea/
+AGENTS.md
+CLAUDE.md
+LEARN.md
+skills-lock.json
+walkthrough-*.html
