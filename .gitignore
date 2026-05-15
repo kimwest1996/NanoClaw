@@ -30,8 +30,8 @@ workspace/office
 *.egg-info/
 
 # Local-only artifacts (blocked by pre-push hook)
-docs/
-evals/
+docs
+evals
 resumedocs/
 
 # Agent / IDE / project config (local only)
